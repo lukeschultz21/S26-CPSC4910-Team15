@@ -33,9 +33,10 @@ CREATE TABLE SPONSORUSERS (
 
 # Subtype of USERS
 CREATE TABLE DRIVERS (
-  user_id BIGINT UNSIGNED PRIMARY KEY,
-  org_id BIGINT UNSIGNED NOT NULL,
-  driver_status ENUM('active','dropped') NOT NULL DEFAULT 'active',
+    user_id INT PRIMARY KEY,
+    sponsorOrganization_id INT NOT NULL,
+    points_earned INT DEFAULT 0,
+    account_status INT DEFAULT 1,  # 1 for active, 0 for inactive,
 
   FOREIGN KEY (user_id) REFERENCES USERS(user_id),
   FOREIGN KEY (org_id) REFERENCES SPONSORORGANIZATION(org_id)
