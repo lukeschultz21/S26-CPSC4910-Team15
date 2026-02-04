@@ -1,12 +1,13 @@
 -- Truck Driver Incentive Program Database Schema
 -- Team 15
 
-DROP SCHEMA IF EXISTS Team15_DB;
-CREATE SCHEMA Team15_DB;
 USE Team15_DB;
 
 CREATE TABLE USERS (
-    user_id INT AUTO_INCREMENT PRIMARY KEY
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100),
+    email VARCHAR(150) UNIQUE,
+    phone VARCHAR(20)
 );
 
 CREATE TABLE SPONSORORGANIZATION (
@@ -19,7 +20,7 @@ CREATE TABLE DRIVERS (
     user_id INT PRIMARY KEY,
     sponsorOrganization_id INT NOT NULL,
     points_earned INT DEFAULT 0,
-    account_status INT DEFAULT 1,  # 1 for active, 0 for inactive,
+    account_status INT DEFAULT 1,  -- 1 for active, 0 for inactive,
 
     FOREIGN KEY (user_id) REFERENCES USERS(user_id),
     FOREIGN KEY (sponsorOrganization_id) REFERENCES SPONSORORGANIZATION(sponsorOrganization_id)
