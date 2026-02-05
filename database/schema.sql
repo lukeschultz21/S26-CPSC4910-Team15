@@ -106,12 +106,12 @@ CREATE TABLE POINTTRANSACTIONS (
 CREATE TABLE AUDITLOG (
   audit_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   action_type VARCHAR(200) NOT NULL, -- should be filled automatically by trigger
-  user_who_did_action BIGINT UNSIGNED NOT NULL,
-  user_action_is_done_to BIGINT UNSIGNED NOT NULL,
+  actor_user_id BIGINT UNSIGNED NOT NULL,
+  actee_user_id BIGINT UNSIGNED NOT NULL,
   time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   
-  FOREIGN KEY (user_who_did_action) REFERENCES USERS(user_id),
-  FOREIGN KEY (user_action_is_done_to) REFERENCES USERS(user_id)
+  FOREIGN KEY (actor_user_id) REFERENCES USERS(user_id),
+  FOREIGN KEY (actee_user_id) REFERENCES USERS(user_id)
 );
 
 CREATE TABLE NOTIFICATIONS (
