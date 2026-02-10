@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Register</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/">Driver Points</a>
+        <span class="pill">Register</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/login.html">Login</a>
+      </div>
+    </div>
+
+    <div class="card formcard">
+      <h2 style="margin:0 0 6px">Create account</h2>
+      <p class="small" style="margin:0 0 14px">Creates a USERS row with an encrypted password.</p>
+
+      <form id="regForm">
+        <div class="row">
+          <div>
+            <label>First name</label>
+            <input name="first_name" autocomplete="given-name" />
+          </div>
+          <div>
+            <label>Last name</label>
+            <input name="last_name" autocomplete="family-name" />
+          </div>
+        </div>
+
+        <label>Email</label>
+        <input name="email" type="email" autocomplete="email" required />
+
+        <label>Password</label>
+        <input name="password" type="password" autocomplete="new-password" required />
+
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" type="submit">Create</button>
+          <a class="btn" href="/">Cancel</a>
+        </div>
+        <div class="msg" id="msg" aria-live="polite"></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const form = Team15.qs("#regForm");
+    const msg = Team15.qs("#msg");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      msg.textContent = "";
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+
+      const data = Object.fromEntries(new FormData(form).entries());
+
+      try {
+        const res = await Team15.api("/api/register", { method: "POST", body: JSON.stringify(data) });
+        window.location.href = res.redirect;
+      } catch (err) {
+        msg.textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

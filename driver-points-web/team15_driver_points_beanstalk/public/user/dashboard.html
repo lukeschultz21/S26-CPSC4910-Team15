@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>User Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/">Driver Points</a>
+        <span class="pill">User</span>
+      </div>
+      <div class="navlinks">
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Welcome</h2>
+      <div class="small" id="welcome"></div>
+      <p class="sub" style="margin-top:12px">
+        Your account exists in USERS, but you do not have a role yet.
+        A sponsor/admin can assign you by inserting a row into DRIVERS/SPONSORUSERS/ADMIN.
+      </p>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      Team15.qs("#welcome").textContent = `Signed in as ${me.email}`;
+      if (me.role !== "user") return window.location.href = `/${me.role}/dashboard.html`;
+    }
+
+    Team15.qs("#logoutBtn").addEventListener("click", async () => {
+      await Team15.api("/api/logout", { method: "POST" });
+      window.location.href = "/";
+    });
+
+    init();
+  </script>
+</body>
+</html>
