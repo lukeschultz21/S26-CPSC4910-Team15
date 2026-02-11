@@ -5,6 +5,7 @@ DROP TRIGGER IF EXISTS trg_driver_dropped_notify;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 
 DELIMITER $$
+
 # Automatically records and updates a driver’s sponsor history 
 # whenever the driver’s assigned sponsor changes.
 CREATE TRIGGER trg_driver_org_history
