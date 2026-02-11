@@ -2,6 +2,7 @@ USE Team15_DB;
 
 DROP TRIGGER IF EXISTS trg_driver_org_history;
 DROP TRIGGER IF EXISTS trg_driver_dropped_notify;
+DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 
 DELIMITER $$
 # Automatically records and updates a driver’s sponsor history 
@@ -48,6 +49,31 @@ BEGIN
       'You have been dropped by your sponsor.',
       'SPONSORORGANIZATION',
       NEW.org_id
+    );
+  END IF;
+END$$
+
+CREATE TRIGGER trg_driver_application_decision_notify
+AFTER UPDATE ON DRIVERAPPLICATIONS
+FOR EACH ROW
+BEGIN
+  -- Fire only when moving from PENDING to a decision state
+  IF OLD.application_status = 'PENDING'
+     AND NEW.application_status IN ('APPROVED','REJECTED','REVOKED') THEN
+
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'APPLICATION_DECISION',
+      CONCAT(
+        'Your application to sponsor ID ',
+        NEW.org_id,
+        ' was ',
+        NEW.application_status,
+        IF(NEW.decision_reason IS NULL OR NEW.decision_reason = '', '', CONCAT(': ', NEW.decision_reason))
+      ),
+      'DRIVERAPPLICATION',
+      NEW.application_id
     );
   END IF;
 END$$
