@@ -1,1 +1,55 @@
+USE Team15_DB;
 
+DROP TRIGGER IF EXISTS trg_driver_org_history;
+DROP TRIGGER IF EXISTS trg_driver_dropped_notify;
+
+DELIMITER $$
+# Automatically records and updates a driver’s sponsor history 
+# whenever the driver’s assigned sponsor changes.
+CREATE TRIGGER trg_driver_org_history
+AFTER UPDATE ON DRIVERS
+FOR EACH ROW
+BEGIN
+  IF (OLD.org_id IS NULL AND NEW.org_id IS NOT NULL)
+     OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NULL)
+     OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NOT NULL AND OLD.org_id <> NEW.org_id) THEN
+
+    UPDATE DRIVER_SPONSOR_HISTORY
+    SET end_date = NOW(),
+        end_reason = 'sponsor_changed'
+    WHERE user_id = NEW.user_id
+      AND end_date IS NULL;
+
+    IF NEW.org_id IS NOT NULL THEN
+      INSERT INTO DRIVER_SPONSOR_HISTORY (user_id, org_id, start_date)
+      VALUES (NEW.user_id, NEW.org_id, NOW());
+    END IF;
+  END IF;
+END$$
+
+# Automatically closes the driver’s current sponsor affiliation 
+# and creates a notification when a driver is marked as dropped.
+CREATE TRIGGER trg_driver_dropped_notify
+AFTER UPDATE ON DRIVERS
+FOR EACH ROW
+BEGIN
+  IF OLD.driver_status <> 'dropped' AND NEW.driver_status = 'dropped' THEN
+
+    UPDATE DRIVER_SPONSOR_HISTORY
+    SET end_date = NOW(),
+        end_reason = 'dropped'
+    WHERE user_id = NEW.user_id
+      AND end_date IS NULL;
+
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'DROPPED',
+      'You have been dropped by your sponsor.',
+      'SPONSORORGANIZATION',
+      NEW.org_id
+    );
+  END IF;
+END$$
+
+DELIMITER ;
