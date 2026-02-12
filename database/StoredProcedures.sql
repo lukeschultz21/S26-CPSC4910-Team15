@@ -93,7 +93,7 @@ BEGIN
     NEW.actor_user_id, -- actor_user_id
     NEW.user_id, -- driver user id
     NEW.org_id, -- sponsor org
-    NEW.reason, -- notes
+    CONCAT(NEW.transaction_id, ' ', NEW.reason) -- notes
   );
 END$$
 
@@ -101,11 +101,19 @@ CREATE TRIGGER audit_log_driver_application_made
 AFTER INSERT ON DRIVERAPPLICATIONS 
 BEGIN
   -- triggers when driver application is made
+  INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, notes)
+  VALUES (
+    'DRIVERAPPLICATION ADDED'
+    NEW.actor_user_id,
+    NEW.user_id,
+    NEW.org_id,
+    NEW.application_id
+  )
 END$$
 
-CREATE TRIGGER audit_log_driver_application_accepted 
+#CREATE TRIGGER audit_log_driver_application_accepted 
   -- triggers when driver application is accepted
-END$$
+#END$$
 
 
 
