@@ -92,7 +92,7 @@ BEGIN
     'POINTSTRANSACTION',
     USER(), -- actor_user_id
     NEW.user_id, -- driver user id
-    '', -- sponsor org
+    NEW.org_id, -- sponsor org
     '', -- notes
   );
 END$$
