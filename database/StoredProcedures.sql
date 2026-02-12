@@ -97,13 +97,15 @@ BEGIN
   );
 END$$
 
-#CREATE TRIGGER audit_log_driver_application_made 
+CREATE TRIGGER audit_log_driver_application_made 
+AFTER INSERT ON DRIVERAPPLICATIONS 
+BEGIN
   -- triggers when driver application is made
-#END$$
+END$$
 
-#CREATE TRIGGER audit_log_driver_application_accepted 
+CREATE TRIGGER audit_log_driver_application_accepted 
   -- triggers when driver application is accepted
-#END$$
+END$$
 
 
 
