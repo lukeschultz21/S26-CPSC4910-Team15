@@ -3,6 +3,7 @@ USE Team15_DB;
 DROP TRIGGER IF EXISTS trg_driver_org_history;
 DROP TRIGGER IF EXISTS trg_driver_dropped_notify;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
+DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
 
 DELIMITER $$
 
@@ -77,6 +78,38 @@ BEGIN
       NEW.application_id
     );
   END IF;
+END$$
+
+# Logs all login attempts to the AUDITLOG
+CREATE TRIGGER trg_login_attempt_to_audit
+AFTER INSERT ON LOGIN_ATTEMPTS
+FOR EACH ROW
+BEGIN
+  INSERT INTO AUDITLOG (
+    action_type,
+    actor_user_id,
+    actee_user_id,
+    org_id,
+    attempted_email,
+    success,
+    details,
+    entity_type,
+    entity_id
+  )
+  VALUES (
+    'LOGIN_ATTEMPT',
+    NULL,
+    NEW.user_id,
+    NULL,
+    NEW.attempted_email,
+    NEW.success,
+    JSON_OBJECT(
+      'ip_address', NEW.ip_address,
+      'user_agent', NEW.user_agent
+    ),
+    'LOGIN_ATTEMPT',
+    NEW.attempt_id
+  );
 END$$
 
 DELIMITER ;
