@@ -110,3 +110,4 @@ VALUES
 INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
 VALUES
 (@u_driver1, 'DROPPED', 'You have been dropped by your sponsor.', 'SPONSORORGANIZATION', @org_acme);
+
