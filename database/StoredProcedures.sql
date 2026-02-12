@@ -79,4 +79,33 @@ BEGIN
   END IF;
 END$$
 
+CREATE TRIGGER audit_log_login_attempt
+  -- triggers when password database is checked
+END$$
+
+CREATE TRIGGER audit_log_points_change 
+AFTER UPDATE ON POINTTRANSACTION
+BEGIN
+  -- triggers when a users points are changed
+  INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, notes)
+  VALUES (
+    'POINTSTRANSACTION',
+    USER(), -- actor_user_id
+    NEW.user_id, -- driver user id
+    '', -- sponsor org
+    '', -- notes
+  );
+END$$
+
+CREATE TRIGGER audit_log_driver_application_made 
+  -- triggers when driver application is made
+END$$
+
+CREATE TRIGGER audit_log_driver_application_accepted 
+  -- triggers when driver application is accepted
+END$$
+
+
+
+
 DELIMITER ;
