@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require("express");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
@@ -76,7 +78,7 @@ app.post("/api/login", async (req, res) => {
 
     const pool = getPool();
     const [rows] = await pool.query(
-      "SELECT user_id, email, password, status, first_name, last_name FROM USERS WHERE email = ? LIMIT 1",
+      "SELECT user_id, email, password_hash, status, first_name, last_name FROM USERS WHERE email = ? LIMIT 1",
       [email]
     );
 
@@ -88,7 +90,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(403).json({ error: "Account not active" });
     }
 
-    const ok = await bcrypt.compare(password, user.password);
+    const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
     const role = await getRole(pool, user.user_id);
@@ -109,16 +111,135 @@ app.post("/api/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
+// Change Password Route
+app.post("/api/change-password", requireAuth, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    const userId = req.session.user.user_id;
+
+    // Validate inputs
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: "Current password and new password required" });
+    }
+
+    if (current_password === new_password) {
+      return res.status(400).json({ error: "New password must be different from current password" });
+    }
+
+    // Password validation rules (same as registration)
+    const PASSWORD_RULES = {
+      minLength: 8,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireNumbers: true,
+      requireSpecialChar: true,
+      specialChars: '!@#$%^&*()_+-=[]{}|;:",.<>?'
+    };
+
+    // Validate new password
+    const errors = [];
+    if (new_password.length < PASSWORD_RULES.minLength) {
+      errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
+    }
+    if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(new_password)) {
+      errors.push('Password must contain at least 1 uppercase letter');
+    }
+    if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(new_password)) {
+      errors.push('Password must contain at least 1 lowercase letter');
+    }
+    if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(new_password)) {
+      errors.push('Password must contain at least 1 number');
+    }
+    if (PASSWORD_RULES.requireSpecialChar) {
+      const hasSpecialChar = PASSWORD_RULES.specialChars.split('').some(char => new_password.includes(char));
+      if (!hasSpecialChar) {
+        errors.push('Password must contain at least 1 special character');
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({ error: errors[0] });
+    }
+
+    // Get current password from database
+    const pool = getPool();
+    const [rows] = await pool.query(
+      "SELECT password_hash FROM USERS WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Verify current password
+    const user = rows[0];
+    const passwordMatch = await bcrypt.compare(current_password, user.password_hash);
+    
+    if (!passwordMatch) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    // Hash new password
+    const newHash = await bcrypt.hash(new_password, 10);
+
+    // Update password in database
+    await pool.query(
+      "UPDATE USERS SET password_hash = ?, updated_at = NOW() WHERE user_id = ?",
+      [newHash, userId]
+    );
+
+    res.json({ ok: true, message: "Password changed successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/register", async (req, res) => {
   try {
     const { email, password, first_name, last_name } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Email and password required" });
 
+    // Password validation rules (backend)
+    const PASSWORD_RULES = {
+      minLength: 8,
+      requireUppercase: true,
+      requireLowercase: true,
+      requireNumbers: true,
+      requireSpecialChar: true,
+      specialChars: '!@#$%^&*()_+-=[]{}|;:",.<>?'
+    };
+
+    // Validate password
+    const errors = [];
+    if (password.length < PASSWORD_RULES.minLength) {
+      errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
+    }
+    if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password)) {
+      errors.push('Password must contain at least 1 uppercase letter');
+    }
+    if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password)) {
+      errors.push('Password must contain at least 1 lowercase letter');
+    }
+    if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(password)) {
+      errors.push('Password must contain at least 1 number');
+    }
+    if (PASSWORD_RULES.requireSpecialChar) {
+      const hasSpecialChar = PASSWORD_RULES.specialChars.split('').some(char => password.includes(char));
+      if (!hasSpecialChar) {
+        errors.push('Password must contain at least 1 special character');
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({ error: errors[0] });
+    }
+
     const pool = getPool();
     const hash = await bcrypt.hash(password, 10);
 
     const [result] = await pool.query(
-      "INSERT INTO USERS (email, password, first_name, last_name, status, created_at) VALUES (?, ?, ?, ?, 'active', NOW())",
+      "INSERT INTO USERS (email, password_hash, first_name, last_name, status, created_at) VALUES (?, ?, ?, ?, 'active', NOW())",
       [email, hash, first_name || null, last_name || null]
     );
 
@@ -187,6 +308,8 @@ app.get("/api/admin/stats", requireRole("admin"), async (req, res) => {
 });
 
 app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
+app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "public", "about.html")));
+app.get("/change-password", (req, res) => res.sendFile(path.join(__dirname, "public", "change-password.html")));
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => console.log(`Listening on ${port}`));
