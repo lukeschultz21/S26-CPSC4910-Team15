@@ -111,8 +111,8 @@ BEGIN
   )
 END$$
 
-#CREATE TRIGGER audit_log_driver_application_accepted 
-  -- triggers when driver application is accepted
+#CREATE TRIGGER audit_log_driver_application_status change 
+  -- triggers when driver application status is changed
 #END$$
 
 
