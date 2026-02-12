@@ -2,7 +2,12 @@ USE Team15_DB;
 
 DROP TRIGGER IF EXISTS trg_driver_org_history;
 DROP TRIGGER IF EXISTS trg_driver_dropped_notify;
+DROP TRIGGER IF EXISTS trg_driver_application_submit_to_audit;
+DROP TRIGGER IF EXISTS trg_driver_application_status_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
+DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
+DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
+DROP TRIGGER IF EXISTS trg_user_password_change_to_audit;
 
 DELIMITER $$
 
@@ -50,6 +55,73 @@ BEGIN
       'You have been dropped by your sponsor.',
       'SPONSORORGANIZATION',
       NEW.org_id
+    );
+  END IF;
+END$$
+
+# Logs driver application submissions to the AUDITLOG
+CREATE TRIGGER trg_driver_application_submit_to_audit
+AFTER INSERT ON DRIVERAPPLICATIONS
+FOR EACH ROW
+BEGIN
+  INSERT INTO AUDITLOG (
+    action_type,
+    actor_user_id,
+    actee_user_id,
+    org_id,
+    attempted_email,
+    success,
+    details,
+    entity_type,
+    entity_id
+  )
+  VALUES (
+    'DRIVER_APP_SUBMITTED',
+    NEW.user_id,               -- driver submitted their own application
+    NEW.user_id,
+    NEW.org_id,
+    NULL,
+    NULL,
+    JSON_OBJECT(
+      'status', NEW.application_status,
+      'is_active', NEW.is_active
+    ),
+    'DRIVERAPPLICATION',
+    NEW.application_id
+  );
+END$$
+
+# Logs driver application status changes to the AUDITLOG
+CREATE TRIGGER trg_driver_application_status_to_audit
+AFTER UPDATE ON DRIVERAPPLICATIONS
+FOR EACH ROW
+BEGIN
+  IF OLD.application_status <> NEW.application_status THEN
+    INSERT INTO AUDITLOG (
+      action_type,
+      actor_user_id,
+      actee_user_id,
+      org_id,
+      attempted_email,
+      success,
+      details,
+      entity_type,
+      entity_id
+    )
+    VALUES (
+      'DRIVER_APP_STATUS_CHANGE',
+      NULL,                     -- unknown at DB level unless you store the actor in the row
+      NEW.user_id,
+      NEW.org_id,
+      NULL,
+      NULL,
+      JSON_OBJECT(
+        'old_status', OLD.application_status,
+        'new_status', NEW.application_status,
+        'decision_reason', NEW.decision_reason
+      ),
+      'DRIVERAPPLICATION',
+      NEW.application_id
     );
   END IF;
 END$$
@@ -117,5 +189,100 @@ END$$
 
 
 
+
+DELIMITER ;
+# Logs all login attempts to the AUDITLOG
+CREATE TRIGGER trg_login_attempt_to_audit
+AFTER INSERT ON LOGIN_ATTEMPTS
+FOR EACH ROW
+BEGIN
+  INSERT INTO AUDITLOG (
+    action_type,
+    actor_user_id,
+    actee_user_id,
+    org_id,
+    attempted_email,
+    success,
+    details,
+    entity_type,
+    entity_id
+  )
+  VALUES (
+    'LOGIN_ATTEMPT',
+    NULL,
+    NEW.user_id,
+    NULL,
+    NEW.attempted_email,
+    NEW.success,
+    JSON_OBJECT(
+      'ip_address', NEW.ip_address,
+      'user_agent', NEW.user_agent
+    ),
+    'LOGIN_ATTEMPT',
+    NEW.attempt_id
+  );
+END$$
+
+CREATE TRIGGER trg_point_transaction_to_audit
+AFTER INSERT ON POINTTRANSACTIONS
+FOR EACH ROW
+BEGIN
+  INSERT INTO AUDITLOG (
+    action_type,
+    actor_user_id,
+    actee_user_id,
+    org_id,
+    attempted_email,
+    success,
+    details,
+    entity_type,
+    entity_id
+  )
+  VALUES (
+    'POINT_CHANGE',
+    NEW.actor_user_id,
+    NEW.user_id,
+    NEW.org_id,
+    NULL,
+    NULL,
+    JSON_OBJECT(
+      'point_change', NEW.point_change,
+      'reason', NEW.reason
+    ),
+    'POINT_TRANSACTION',
+    NEW.transaction_id
+  );
+END$$
+
+CREATE TRIGGER trg_user_password_change_to_audit
+AFTER UPDATE ON USERS
+FOR EACH ROW
+BEGIN
+  -- Only log when the password actually changes
+  IF OLD.password_hash <> NEW.password_hash THEN
+    INSERT INTO AUDITLOG (
+      action_type,
+      actor_user_id,
+      actee_user_id,
+      org_id,
+      attempted_email,
+      success,
+      details,
+      entity_type,
+      entity_id
+    )
+    VALUES (
+      'PASSWORD_CHANGE',
+      NEW.user_id,      
+      NEW.user_id,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      'USERS',
+      NEW.user_id
+    );
+  END IF;
+END$$
 
 DELIMITER ;
