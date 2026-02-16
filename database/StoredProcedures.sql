@@ -17,20 +17,25 @@ CREATE TRIGGER trg_driver_org_history
 AFTER UPDATE ON DRIVERS
 FOR EACH ROW
 BEGIN
-  IF (OLD.org_id IS NULL AND NEW.org_id IS NOT NULL)
-     OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NULL)
-     OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NOT NULL AND OLD.org_id <> NEW.org_id) THEN
+  -- If this update is dropping the driver, let trg_driver_dropped_notify handle history
+  IF NOT (OLD.driver_status <> 'dropped' AND NEW.driver_status = 'dropped') THEN
 
-    UPDATE DRIVER_SPONSOR_HISTORY
-    SET end_date = NOW(),
-        end_reason = 'sponsor_changed'
-    WHERE user_id = NEW.user_id
-      AND end_date IS NULL;
+    IF (OLD.org_id IS NULL AND NEW.org_id IS NOT NULL)
+       OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NULL)
+       OR (OLD.org_id IS NOT NULL AND NEW.org_id IS NOT NULL AND OLD.org_id <> NEW.org_id) THEN
 
-    IF NEW.org_id IS NOT NULL THEN
-      INSERT INTO DRIVER_SPONSOR_HISTORY (user_id, org_id, start_date)
-      VALUES (NEW.user_id, NEW.org_id, NOW());
+      UPDATE DRIVER_SPONSOR_HISTORY
+      SET end_date = NOW(),
+          end_reason = 'sponsor_changed'
+      WHERE user_id = NEW.user_id
+        AND end_date IS NULL;
+
+      IF NEW.org_id IS NOT NULL THEN
+        INSERT INTO DRIVER_SPONSOR_HISTORY (user_id, org_id, start_date)
+        VALUES (NEW.user_id, NEW.org_id, NOW());
+      END IF;
     END IF;
+
   END IF;
 END$$
 
@@ -151,46 +156,6 @@ BEGIN
   END IF;
 END$$
 
-# CREATE TRIGGER audit_log_login_attempt
-  -- triggers when password database is checked
-# END$$
-
-CREATE TRIGGER audit_log_points_change 
-AFTER UPDATE ON POINTTRANSACTIONS
-BEGIN
-  -- triggers when a users points are changed
-  INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, notes)
-  VALUES (
-    'POINTSTRANSACTION',
-    NEW.actor_user_id, -- actor_user_id
-    NEW.user_id, -- driver user id
-    NEW.org_id, -- sponsor org
-    CONCAT(NEW.transaction_id, ' ', NEW.reason) -- notes
-  );
-END$$
-
-CREATE TRIGGER audit_log_driver_application_made 
-AFTER INSERT ON DRIVERAPPLICATIONS 
-BEGIN
-  -- triggers when driver application is made
-  INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, notes)
-  VALUES (
-    'DRIVERAPPLICATION ADDED'
-    NEW.actor_user_id,
-    NEW.user_id,
-    NEW.org_id,
-    NEW.application_id
-  )
-END$$
-
-#CREATE TRIGGER audit_log_driver_application_status change 
-  -- triggers when driver application status is changed
-#END$$
-
-
-
-
-DELIMITER ;
 # Logs all login attempts to the AUDITLOG
 CREATE TRIGGER trg_login_attempt_to_audit
 AFTER INSERT ON LOGIN_ATTEMPTS
@@ -278,7 +243,7 @@ BEGIN
       NULL,
       NULL,
       NULL,
-      NULL,
+      JSON_OBJECT(),
       'USERS',
       NEW.user_id
     );
