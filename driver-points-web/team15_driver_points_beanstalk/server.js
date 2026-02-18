@@ -42,6 +42,14 @@ function requireRole(role) {
   };
 }
 
+function requireAnyRole(roles) {
+  return (req, res, next) => {
+    if (!req.session.user) return res.status(401).json({ error: "Not logged in" });
+    if (!roles.includes(req.session.user.role)) return res.status(403).json({ error: "Forbidden" });
+    next();
+  };
+}
+
 async function getRole(pool, userId) {
   const [adminRows] = await pool.query("SELECT 1 FROM ADMIN WHERE user_id = ? LIMIT 1", [userId]);
   if (adminRows.length) return "admin";
@@ -258,12 +266,45 @@ app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const userId = req.session.user.user_id;
 
+    // Get current points
     const [rows] = await pool.query(
       "SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? LIMIT 1",
       [userId]
     );
 
-    res.json({ ok: true, current_points: rows.length ? Number(rows[0].current_points) : 0 });
+    // Get lifetime points (sum of all positive point changes)
+    const [lifetimeRows] = await pool.query(
+      "SELECT COALESCE(SUM(point_change), 0) AS lifetime_points FROM POINTTRANSACTIONS WHERE user_id = ? AND point_change > 0",
+      [userId]
+    );
+
+    // Get sponsor's cents_per_point for dollar value calculation
+    const [driverRows] = await pool.query(
+      "SELECT d.org_id FROM DRIVERS d WHERE d.user_id = ? LIMIT 1",
+      [userId]
+    );
+
+    let centsPerPoint = 1; // default
+    if (driverRows.length && driverRows[0].org_id) {
+      const [orgRows] = await pool.query(
+        "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+        [driverRows[0].org_id]
+      );
+      if (orgRows.length) {
+        centsPerPoint = orgRows[0].cents_per_point;
+      }
+    }
+
+    const currentPoints = rows.length ? Number(rows[0].current_points) : 0;
+    const lifetimePoints = Number(lifetimeRows[0].lifetime_points);
+
+    res.json({ 
+      ok: true, 
+      current_points: currentPoints,
+      lifetime_points: lifetimePoints,
+      cents_per_point: centsPerPoint,
+      dollar_value: (currentPoints * centsPerPoint) / 100
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -275,11 +316,262 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
     const userId = req.session.user.user_id;
 
     const [rows] = await pool.query(
-      "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ? ORDER BY transaction_date DESC LIMIT 25",
+      `SELECT 
+        pt.transaction_id,
+        pt.created_at AS transaction_date,
+        pt.point_change,
+        pt.reason,
+        pt.actor_user_id,
+        CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS actor_name,
+        u.email AS actor_email
+      FROM POINTTRANSACTIONS pt
+      LEFT JOIN USERS u ON pt.actor_user_id = u.user_id
+      WHERE pt.user_id = ? 
+      ORDER BY pt.created_at DESC 
+      LIMIT 25`,
       [userId]
     );
 
     res.json({ ok: true, transactions: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const { start_date, end_date, limit = 25 } = req.query;
+
+    let query = `
+      SELECT 
+        pt.transaction_id,
+        pt.created_at AS transaction_date,
+        pt.point_change,
+        pt.reason,
+        pt.actor_user_id,
+        CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS actor_name,
+        u.email AS actor_email,
+        @running_balance := @running_balance + pt.point_change AS balance_after
+      FROM POINTTRANSACTIONS pt
+      LEFT JOIN USERS u ON pt.actor_user_id = u.user_id
+      CROSS JOIN (SELECT @running_balance := 0) vars
+      WHERE pt.user_id = ?
+    `;
+
+    const params = [userId];
+
+    if (start_date) {
+      query += " AND pt.created_at >= ?";
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      query += " AND pt.created_at <= ?";
+      params.push(end_date);
+    }
+
+    query += " ORDER BY pt.created_at ASC";
+    
+    if (limit) {
+      query += " LIMIT ?";
+      params.push(parseInt(limit));
+    }
+
+    const [rows] = await pool.query(query, params);
+
+    res.json({ ok: true, history: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/driver/points/add", requireAnyRole(["sponsor", "admin"]), async (req, res) => {
+  try {
+    const pool = getPool();
+    const { driver_id, points_amount, reason } = req.body;
+    const actorUserId = req.session.user.user_id;
+
+    // Validate inputs
+    if (!driver_id || !points_amount || !reason) {
+      return res.status(400).json({ error: "driver_id, points_amount, and reason are required" });
+    }
+
+    if (points_amount <= 0) {
+      return res.status(400).json({ error: "points_amount must be positive" });
+    }
+
+    // Verify driver exists
+    const [driverRows] = await pool.query(
+      "SELECT user_id, org_id FROM DRIVERS WHERE user_id = ? LIMIT 1",
+      [driver_id]
+    );
+
+    if (!driverRows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const driver = driverRows[0];
+
+    // Get sponsor's org_id if actor is sponsor
+    let orgId = driver.org_id;
+    if (req.session.user.role === "sponsor") {
+      const [sponsorRows] = await pool.query(
+        "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+        [actorUserId]
+      );
+      if (!sponsorRows.length) {
+        return res.status(403).json({ error: "Sponsor not associated with an organization" });
+      }
+      orgId = sponsorRows[0].org_id;
+
+      // Verify driver belongs to sponsor's org
+      if (driver.org_id !== orgId) {
+        return res.status(403).json({ error: "Driver does not belong to your organization" });
+      }
+    }
+
+    // Start transaction
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // Create point transaction
+      await connection.query(
+        "INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
+        [driver_id, orgId, points_amount, reason, actorUserId]
+      );
+
+      // Update or insert driver point balance
+      await connection.query(
+        `INSERT INTO DRIVERPOINTBALANCES (user_id, current_points, updated_at)
+         VALUES (?, ?, NOW())
+         ON DUPLICATE KEY UPDATE current_points = current_points + ?, updated_at = NOW()`,
+        [driver_id, points_amount, points_amount]
+      );
+
+      // Create audit log entry
+      await connection.query(
+        `INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, success, details, entity_type, entity_id, time_done)
+         VALUES ('ADD_POINTS', ?, ?, ?, TRUE, ?, 'DRIVER', ?, NOW())`,
+        [actorUserId, driver_id, orgId, JSON.stringify({ points: points_amount, reason }), driver_id]
+      );
+
+      // Create notification for driver
+      await connection.query(
+        `INSERT INTO NOTIFICATIONS (user_id, notification_type, message, created_at)
+         VALUES (?, 'POINTS_ADDED', ?, NOW())`,
+        [driver_id, `${points_amount} points added: ${reason}`]
+      );
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ ok: true, message: "Points added successfully", points_added: points_amount });
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      throw error;
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/driver/points/deduct", requireAnyRole(["sponsor", "admin"]), async (req, res) => {
+  try {
+    const pool = getPool();
+    const { driver_id, points_amount, reason } = req.body;
+    const actorUserId = req.session.user.user_id;
+
+    // Validate inputs
+    if (!driver_id || !points_amount || !reason) {
+      return res.status(400).json({ error: "driver_id, points_amount, and reason are required" });
+    }
+
+    if (points_amount <= 0) {
+      return res.status(400).json({ error: "points_amount must be positive" });
+    }
+
+    // Verify driver exists and get current balance
+    const [driverRows] = await pool.query(
+      "SELECT d.user_id, d.org_id, COALESCE(dpb.current_points, 0) AS current_points FROM DRIVERS d LEFT JOIN DRIVERPOINTBALANCES dpb ON d.user_id = dpb.user_id WHERE d.user_id = ? LIMIT 1",
+      [driver_id]
+    );
+
+    if (!driverRows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const driver = driverRows[0];
+    const currentPoints = driver.current_points;
+
+    // Check if driver has sufficient points
+    if (currentPoints < points_amount) {
+      return res.status(400).json({ 
+        error: "Insufficient points", 
+        current_points: currentPoints, 
+        requested: points_amount 
+      });
+    }
+
+    // Get sponsor's org_id if actor is sponsor
+    let orgId = driver.org_id;
+    if (req.session.user.role === "sponsor") {
+      const [sponsorRows] = await pool.query(
+        "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+        [actorUserId]
+      );
+      if (!sponsorRows.length) {
+        return res.status(403).json({ error: "Sponsor not associated with an organization" });
+      }
+      orgId = sponsorRows[0].org_id;
+
+      // Verify driver belongs to sponsor's org
+      if (driver.org_id !== orgId) {
+        return res.status(403).json({ error: "Driver does not belong to your organization" });
+      }
+    }
+
+    // Start transaction
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // Create point transaction with negative value
+      await connection.query(
+        "INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
+        [driver_id, orgId, -points_amount, reason, actorUserId]
+      );
+
+      // Update driver point balance
+      await connection.query(
+        "UPDATE DRIVERPOINTBALANCES SET current_points = current_points - ?, updated_at = NOW() WHERE user_id = ?",
+        [points_amount, driver_id]
+      );
+
+      // Create audit log entry
+      await connection.query(
+        `INSERT INTO AUDITLOG (action_type, actor_user_id, actee_user_id, org_id, success, details, entity_type, entity_id, time_done)
+         VALUES ('DEDUCT_POINTS', ?, ?, ?, TRUE, ?, 'DRIVER', ?, NOW())`,
+        [actorUserId, driver_id, orgId, JSON.stringify({ points: points_amount, reason }), driver_id]
+      );
+
+      await connection.commit();
+      connection.release();
+
+      res.json({ 
+        ok: true, 
+        message: "Points deducted successfully", 
+        points_deducted: points_amount,
+        new_balance: currentPoints - points_amount 
+      });
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      throw error;
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

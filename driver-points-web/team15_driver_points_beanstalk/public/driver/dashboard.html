@@ -27,6 +27,11 @@
         <div class="box">
           <div class="small">Current Points</div>
           <div style="font-size:30px; font-weight:800" id="points">—</div>
+          <div class="small" id="dollarValue" style="color:var(--muted); margin-top:4px">—</div>
+        </div>
+        <div class="box">
+          <div class="small">Lifetime Points Earned</div>
+          <div style="font-size:30px; font-weight:800" id="lifetimePoints">—</div>
         </div>
       </div>
     </div>
@@ -36,7 +41,7 @@
       <div class="small">Latest 25 point transactions.</div>
       <table class="table" id="txTable">
         <thead>
-          <tr><th>Date</th><th>Points</th><th>Description</th></tr>
+          <tr><th>Date</th><th>Points</th><th>Description</th><th>Actor</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -48,14 +53,23 @@
   <script>
     const welcome = Team15.qs("#welcome");
     const pointsEl = Team15.qs("#points");
+    const lifetimePointsEl = Team15.qs("#lifetimePoints");
+    const dollarValueEl = Team15.qs("#dollarValue");
     const tbody = Team15.qs("#txTable tbody");
     const msg = Team15.qs("#msg");
 
+    function formatDate(dateStr) {
+      if (!dateStr) return "";
+      const d = new Date(dateStr);
+      return d.toLocaleDateString() + " " + d.toLocaleTimeString();
+    }
+
     function renderRow(tx) {
-      const date = tx.transaction_date || tx.created_at || tx.date || "";
-      const pts = (tx.points_delta ?? tx.points ?? tx.amount ?? "");
+      const date = formatDate(tx.transaction_date || tx.created_at || tx.date);
+      const pts = (tx.point_change ?? tx.points_delta ?? tx.points ?? tx.amount ?? "");
       const desc = tx.description || tx.reason || tx.memo || "";
-      return `<tr><td>${date}</td><td>${pts}</td><td>${desc}</td></tr>`;
+      const actor = tx.actor_name || tx.actor_email || "System";
+      return `<tr><td>${date}</td><td>${pts}</td><td>${desc}</td><td>${actor}</td></tr>`;
     }
 
     async function init() {
@@ -67,7 +81,9 @@
 
       try {
         const p = await Team15.api("/api/driver/points", { method: "GET" });
-        pointsEl.textContent = p.current_points;
+        pointsEl.textContent = p.current_points.toLocaleString();
+        lifetimePointsEl.textContent = p.lifetime_points.toLocaleString();
+        dollarValueEl.textContent = `≈ $${p.dollar_value.toFixed(2)} (${p.cents_per_point}¢ per point)`;
       } catch (e) {
         msg.textContent = e.message;
       }
