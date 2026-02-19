@@ -168,5 +168,9 @@ CREATE TABLE NOTIFICATIONS (
   entity_type VARCHAR(50) NULL,
   entity_id BIGINT UNSIGNED NULL,
 
-  FOREIGN KEY (user_id) REFERENCES USERS(user_id)
+  FOREIGN KEY (user_id) REFERENCES USERS(user_id),
+
+  INDEX idx_notifications_user_created (user_id, created_at),
+  INDEX idx_notifications_created (created_at),
+  INDEX idx_notifications_type_created (notification_type, created_at)
 );
