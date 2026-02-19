@@ -25,6 +25,12 @@
       <p class="sub" style="margin-top:12px">Shows pending driver applications (example endpoint).</p>
     </div>
 
+    <!-- Conversion Rate Display -->
+    <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
+      <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
+    </div>
+
     <div class="card" style="margin-top:18px">
       <h3 style="margin:0 0 6px">Pending Applications</h3>
       <table class="table" id="appTable">
@@ -40,6 +46,7 @@
   <script src="/app.js"></script>
   <script>
     const welcome = Team15.qs("#welcome");
+    const conversionEl = Team15.qs("#conversionRate");
     const tbody = Team15.qs("#appTable tbody");
     const msg = Team15.qs("#msg");
 
@@ -48,6 +55,13 @@
       if (!me) return window.location.href = "/login.html";
       if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
       welcome.textContent = `Signed in as ${me.email}`;
+
+      try {
+        const data = await Team15.api("/api/sponsor/conversion-rate", { method: "GET" });
+        conversionEl.textContent = `${data.conversion_rate} points = $1`;
+      } catch (e) {
+        msg.textContent = e.message;
+      }
 
       try {
         const data = await Team15.api("/api/sponsor/pending-applications", { method: "GET" });
