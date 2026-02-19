@@ -349,6 +349,40 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
   }
 });
 
+app.get("/api/sponsor/driver-dollars", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const { points } = req.body;
+    if (typeof points !== "number") {
+      return res.status(400).json({ error: "Points must be a number" });
+    }
+    // Get the Org Id for the sponsor
+    const [orgRows] = await pool.query(
+      "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+    // If the sponsor is not found, return an error
+    if (!orgRows.length) {
+      return res.status(404).json({ error: "Sponsor not found" });
+    }
+    // If the sponsor is found, get the point to cent conversion rate for that org
+    const orgId = orgRows[0].org_id;
+    const [conversionRows] = await pool.query(
+      "SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [orgId]
+    );
+    if (!conversionRows.length) {
+      return res.status(404).json({ error: "Conversion rate not found" });
+    }
+    const conversionRate = conversionRows[0].point_to_cent_conversion;
+    const dollars = (points * conversionRate) / 100;
+    res.json({ ok: true, dollars: `$${dollars.toFixed(2)}` });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
