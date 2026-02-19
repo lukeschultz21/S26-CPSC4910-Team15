@@ -62,6 +62,24 @@ CREATE TABLE ADMIN (
   FOREIGN KEY (user_id) REFERENCES USERS(user_id)
 );
 
+CREATE TABLE TEAM (
+  team_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  role VARCHAR(100) NOT NULL,
+  bio VARCHAR(500),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert team members
+INSERT INTO TEAM (first_name, last_name, role, bio) VALUES
+('Luke', 'Schultz', 'Team Lead', 'Leads the team and oversees project development'),
+('Noah', 'Samol', 'Developer', 'Full-stack developer focused on backend systems'),
+('Miles', 'Rockow', 'Developer', 'Frontend and UI/UX specialist'),
+('Scott', 'Shaffer', 'Developer', 'Database and performance optimization expert'),
+('Uyen', 'Nguyen', 'Developer', 'Frontend and UI/UX specialist');
+
 CREATE TABLE DRIVER_SPONSOR_HISTORY (
   history_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
