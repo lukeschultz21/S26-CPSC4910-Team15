@@ -8,6 +8,7 @@ DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
 DROP TRIGGER IF EXISTS trg_pointtransactions_validate;
 DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
+DROP TRIGGER IF EXISTS trg_purchase_order_summary_notify;
 DROP TRIGGER IF EXISTS trg_user_password_change_to_audit;
 
 DELIMITER $$
@@ -274,6 +275,32 @@ BEGIN
     'POINT_TRANSACTION',
     NEW.transaction_id
   );
+END$$
+
+CREATE TRIGGER trg_purchase_order_summary_notify
+AFTER INSERT ON PURCHASES
+FOR EACH ROW
+BEGIN
+  DECLARE v_enabled BOOLEAN;
+
+  -- Read driver's global preference
+  SELECT notifications_enabled
+    INTO v_enabled
+  FROM USERS
+  WHERE user_id = NEW.user_id
+  LIMIT 1;
+
+  -- Only create notification if enabled
+  IF v_enabled = TRUE THEN
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'ORDER_SUMMARY',
+      CONCAT('Order #', NEW.purchase_id, ' has been placed.'),
+      'PURCHASE',
+      NEW.purchase_id
+    );
+  END IF;
 END$$
 
 CREATE TRIGGER trg_user_password_change_to_audit

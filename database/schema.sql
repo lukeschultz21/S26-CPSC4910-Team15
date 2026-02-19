@@ -13,6 +13,7 @@ CREATE TABLE USERS (
   last_name VARCHAR(100),
   phone VARCHAR(50),
   status ENUM('active','locked','disabled') NOT NULL DEFAULT 'active',
+  notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE, -- for use in triggers specific to notification type. 
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
