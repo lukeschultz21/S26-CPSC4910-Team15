@@ -383,6 +383,53 @@ app.get("/api/sponsor/driver-dollars", requireRole("sponsor"), async (req, res) 
   }
 });
 
+app.get("/api/sponsor/conversion-rate", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const [orgRows] = await pool.query("SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1", [userId]);
+    if (!orgRows.length) return res.status(404).json({ error: "Sponsor not found" });
+    const [conversionRows] = await pool.query("SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1", [orgRows[0].org_id]);
+    if (!conversionRows.length) return res.status(404).json({ error: "Conversion rate not found" });
+    res.json({ ok: true, conversion_rate: conversionRows[0].point_to_cent_conversion });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    // Get the driver's org_id
+    const [driverRows] = await pool.query(
+      "SELECT org_id FROM DRIVERS WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+
+    if (!driverRows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const orgId = driverRows[0].org_id;
+
+    // Get conversion rate
+    const [conversionRows] = await pool.query(
+      "SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [orgId]
+    );
+
+    if (!conversionRows.length) {
+      return res.status(404).json({ error: "Conversion rate not found" });
+    }
+
+    res.json({ ok: true, conversion_rate: conversionRows[0].point_to_cent_conversion });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();

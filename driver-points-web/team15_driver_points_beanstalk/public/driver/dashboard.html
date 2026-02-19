@@ -30,6 +30,18 @@
   <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="pointsAmount">0</div>
 </div>
 
+<!-- Lifetime Points Display Section -->
+<div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+  <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Lifetime Points Earned</h3>
+  <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="lifetimePoints">0</div>
+</div>
+
+<!-- Conversion Rate Display Section -->
+<div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+  <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
+  <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
+</div>
+
 <div class="card" style="margin-top:18px">
   <h3 style="margin:0 0 6px">Recent Transactions</h3>
   <div class="small">Latest 25 point transactions.</div>
@@ -46,6 +58,8 @@
   <script>
     const welcome = Team15.qs("#welcome");
     const pointsEl = Team15.qs("#pointsAmount");
+    const lifetimeEl = Team15.qs("#lifetimePoints");
+    const conversionEl = Team15.qs("#conversionRate");
     const tbody = Team15.qs("#txTable tbody");
     const msg = Team15.qs("#msg");
 
@@ -66,6 +80,20 @@
       try {
         const p = await Team15.api("/api/driver/points", { method: "GET" });
         pointsEl.textContent = p.current_points;
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+
+      try {
+        const t = await Team15.api("/api/driver/total-points", { method: "GET" });
+        lifetimeEl.textContent = t.total_points;
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+
+      try {
+        const c = await Team15.api("/api/driver/conversion-rate", { method: "GET" });
+        conversionEl.textContent = `${c.conversion_rate} points = $1`;
       } catch (e) {
         msg.textContent = e.message;
       }
