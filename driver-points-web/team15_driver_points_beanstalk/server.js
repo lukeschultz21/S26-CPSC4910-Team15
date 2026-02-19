@@ -43,15 +43,21 @@ function requireRole(role) {
 }
 
 async function getRole(pool, userId) {
+  console.log("Getting role for user:", userId);
+  
   const [adminRows] = await pool.query("SELECT 1 FROM ADMIN WHERE user_id = ? LIMIT 1", [userId]);
+  console.log("Admin rows:", adminRows.length);
   if (adminRows.length) return "admin";
 
   const [sponsorRows] = await pool.query("SELECT 1 FROM SPONSORUSERS WHERE user_id = ? LIMIT 1", [userId]);
+  console.log("Sponsor rows:", sponsorRows.length);
   if (sponsorRows.length) return "sponsor";
 
   const [driverRows] = await pool.query("SELECT 1 FROM DRIVERS WHERE user_id = ? LIMIT 1", [userId]);
+  console.log("Driver rows:", driverRows.length);
   if (driverRows.length) return "driver";
 
+  console.log("No role found, returning user");
   return "user";
 }
 
@@ -302,6 +308,34 @@ app.get("/api/admin/stats", requireRole("admin"), async (req, res) => {
     const pool = getPool();
     const [[u]] = await pool.query("SELECT COUNT(*) AS users FROM USERS");
     res.json({ ok: true, users: Number(u.users) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// DRIVER POINT HISTORY ENDPOINT
+// ============================================================
+app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    const [transactions] = await pool.query(
+      `SELECT 
+        transaction_id,
+        point_change,
+        reason,
+        created_at as transaction_date,
+        actor_user_id
+      FROM POINTTRANSACTIONS 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT 100`,
+      [userId]
+    );
+
+    res.json({ ok: true, transactions });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
