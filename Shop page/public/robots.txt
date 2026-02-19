@@ -1,0 +1,7 @@
+User-agent: Googlebot
+Disallow: /nogooglebot/
+
+User-agent: *
+Allow: /
+
+Sitemap: https://modest-straight-chamois-oa6prc.teleporthq.app/sitemap.xml

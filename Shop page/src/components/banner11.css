@@ -1,0 +1,36 @@
+.banner11-container1 {
+  gap: var(--dl-layout-space-unit);
+  display: flex;
+  position: relative;
+  align-items: center;
+}
+ 
+.banner11-thq-max-width-elm {
+  gap: var(--dl-layout-space-oneandhalfunits);
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+}
+ 
+.banner11-container2 {
+  gap: var(--dl-layout-space-halfunit);
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+}
+ 
+.banner11-thq-title-elm {
+  text-align: center;
+}
+ 
+.banner11-text1 {
+  text-align: center;
+}
+ 
+.banner11-text2 {
+  display: inline-block;
+}
+ 
+.banner11-text3 {
+  display: inline-block;
+}
