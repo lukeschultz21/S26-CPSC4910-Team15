@@ -277,16 +277,29 @@ app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
   }
 });
 
+app.get("/api/driver/total-points", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const [rows] = await pool.query(
+      "SELECT SUM(point_change) AS total_points FROM POINTTRANSACTIONS WHERE user_id = ? AND point_change > 0",
+      [userId]
+    );
+    res.json({ ok: true, total_points: rows.length ? Number(rows[0].total_points) : 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) => {
   try {
     const pool = getPool();
     const userId = req.session.user.user_id;
-    const { user_id, points, reason } = req.body;
- 
+    const { user_id, point_change, reason } = req.body;
 
     // TODO should we verify that this sponsor is actually sponsoring this driver before allowing the update?
 
-    if (typeof points !== "number") {
+    if (typeof point_change !== "number") {
       return res.status(400).json({ error: "Points must be a number" });
     }
 
@@ -305,16 +318,16 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     // Then update
     await pool.query(
       "UPDATE DRIVERPOINTBALANCES SET current_points = ? WHERE user_id = ?",
-      [points, user_id]
+      [oldPoints + point_change, user_id]
     );
 
     // Then record the change
     await pool.query(
       "INSERT INTO POINTTRANSACTIONS (user_id, point_change, reason, actor_user_id, transaction_date) VALUES (?, ?, ?, ?, NOW())",
-      [user_id, Math.abs(oldPoints - points), reason || "None", userId]
+      [user_id, point_change, reason || "None", userId]
     );
 
-    res.json({ ok: true, oldPoints, newPoints: points });
+    res.json({ ok: true, oldPoints, newPoints: oldPoints + point_change });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
