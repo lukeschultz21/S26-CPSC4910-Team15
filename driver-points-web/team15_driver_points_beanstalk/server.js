@@ -261,6 +261,41 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+// Get platform statistics
+app.get("/api/about/stats", async (req, res) => {
+  try {
+    const pool = getPool();
+    
+    const [[userCount]] = await pool.query("SELECT COUNT(*) AS count FROM USERS");
+    const [[driverCount]] = await pool.query("SELECT COUNT(*) AS count FROM DRIVERS WHERE driver_status = 'active'");
+    const [[sponsorCount]] = await pool.query("SELECT COUNT(*) AS count FROM SPONSORUSERS");
+    const [[orgCount]] = await pool.query("SELECT COUNT(*) AS count FROM SPONSORORGANIZATION WHERE org_status = 'active'");
+    
+    res.json({ 
+      ok: true, 
+      total_users: Number(userCount.count),
+      active_drivers: Number(driverCount.count),
+      active_sponsors: Number(sponsorCount.count),
+      active_organizations: Number(orgCount.count)
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get team members from database
+app.get("/api/about/team", async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(
+      "SELECT team_id, first_name, last_name, role, bio FROM TEAM WHERE is_active = TRUE ORDER BY team_id ASC"
+    );
+    res.json({ ok: true, team: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();

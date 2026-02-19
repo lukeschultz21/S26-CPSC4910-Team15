@@ -72,6 +72,35 @@
       margin: 0;
     }
 
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+      margin-top: 24px;
+    }
+
+    .stat-card {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .stat-number {
+      font-size: 48px;
+      font-weight: bold;
+      color: var(--brand);
+      margin: 12px 0;
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .team-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -138,6 +167,11 @@
         gap: 16px;
       }
 
+      .stats-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
       .team-grid {
         grid-template-columns: 1fr;
         gap: 16px;
@@ -164,6 +198,29 @@
         A modern incentive platform designed to reward safe driving and 
         encourage responsible road behavior through a points-based system.
       </p>
+    </section>
+
+    <!-- Dynamic Statistics Section -->
+    <section class="about-section">
+      <h2>Platform Statistics</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total Users</div>
+          <div class="stat-number" id="totalUsers">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Drivers</div>
+          <div class="stat-number" id="activeDrivers">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Sponsors</div>
+          <div class="stat-number" id="activeSponsor">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Organizations</div>
+          <div class="stat-number" id="orgs">-</div>
+        </div>
+      </div>
     </section>
 
     <section class="about-section">
@@ -234,7 +291,7 @@
 
     <section class="about-section">
       <h2>Development Team</h2>
-      <div class="team-grid">
+      <div class="team-grid" id="teamContainer">
         <div class="team-member">
           <h4>Team Lead</h4>
           <p>Luke Schultz</p>
@@ -280,5 +337,39 @@
       <p>&copy; 2026 Driver Points System - Team 15. All rights reserved.</p>
     </div>
   </div>
+
+  <script src="/app.js"></script>
+  <script>
+    async function loadStats() {
+      try {
+        const data = await Team15.api("/api/about/stats", { method: "GET" });
+        document.getElementById("totalUsers").textContent = data.total_users;
+        document.getElementById("activeDrivers").textContent = data.active_drivers;
+        document.getElementById("activeSponsor").textContent = data.active_sponsors;
+        document.getElementById("orgs").textContent = data.active_organizations;
+      } catch (e) {
+        console.error("Failed to load stats:", e.message);
+      }
+    }
+
+    async function loadTeam() {
+      try {
+        const data = await Team15.api("/api/about/team", { method: "GET" });
+        const teamContainer = document.getElementById("teamContainer");
+        teamContainer.innerHTML = data.team.map(member => `
+          <div class="team-member">
+            <h4>${member.role}</h4>
+            <p>${member.first_name} ${member.last_name}</p>
+            ${member.bio ? `<p style="font-size: 12px; margin-top: 8px; color: var(--muted);">${member.bio}</p>` : ''}
+          </div>
+        `).join("");
+      } catch (e) {
+        console.error("Failed to load team:", e.message);
+      }
+    }
+
+    loadStats();
+    loadTeam();
+  </script>
 </body>
 </html>
