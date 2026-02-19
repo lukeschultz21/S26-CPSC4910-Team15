@@ -9,7 +9,7 @@ DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
 DROP TRIGGER IF EXISTS trg_pointtransactions_validate;
 DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
 DROP TRIGGER IF EXISTS trg_purchase_order_summary_notify;
-DROP TRIGGER IF EXISTS trg_user_password_change_to_audit;
+DROP TRIGGER IF EXISTS trg_user_password_change_notify_audit;
 
 DELIMITER $$
 
@@ -214,38 +214,6 @@ BEGIN
   END IF;
 END$$
 
-
-CREATE TRIGGER trg_point_transaction_to_audit
-AFTER INSERT ON POINTTRANSACTIONS
-FOR EACH ROW
-BEGIN
-  INSERT INTO AUDITLOG (
-    action_type,
-    actor_user_id,
-    actee_user_id,
-    org_id,
-    attempted_email,
-    success,
-    details,
-    entity_type,
-    entity_id
-  )
-  VALUES (
-    'POINT_CHANGE',
-    NEW.actor_user_id,
-    NEW.user_id,
-    NEW.org_id,
-    NULL,
-    NULL,
-    JSON_OBJECT(
-      'point_change', NEW.point_change,
-      'reason', NEW.reason
-    ),
-    'POINT_TRANSACTION',
-    NEW.transaction_id
-  );
-END$$
-
 CREATE TRIGGER trg_point_transaction_to_audit
 AFTER INSERT ON POINTTRANSACTIONS
 FOR EACH ROW
@@ -303,12 +271,14 @@ BEGIN
   END IF;
 END$$
 
-CREATE TRIGGER trg_user_password_change_to_audit
+CREATE TRIGGER trg_user_password_change_notify_audit
 AFTER UPDATE ON USERS
 FOR EACH ROW
 BEGIN
-  -- Only log when the password actually changes
+  -- Only fire when the password actually changes
   IF OLD.password_hash <> NEW.password_hash THEN
+
+    -- 1) Audit log (existing behavior)
     INSERT INTO AUDITLOG (
       action_type,
       actor_user_id,
@@ -322,7 +292,7 @@ BEGIN
     )
     VALUES (
       'PASSWORD_CHANGE',
-      NEW.user_id,      
+      NEW.user_id,
       NEW.user_id,
       NULL,
       NULL,
@@ -331,6 +301,17 @@ BEGIN
       'USERS',
       NEW.user_id
     );
+
+    -- 2) Mandatory notification (do NOT gate behind notifications_enabled)
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'PASSWORD_CHANGED',
+      'Your password was changed. If this wasn’t you, please contact support immediately.',
+      'USERS',
+      NEW.user_id
+    );
+
   END IF;
 END$$
 
