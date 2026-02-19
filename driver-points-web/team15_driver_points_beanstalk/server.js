@@ -34,10 +34,12 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireRole(role) {
+function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.session.user) return res.status(401).json({ error: "Not logged in" });
-    if (req.session.user.role !== role) return res.status(403).json({ error: "Forbidden" });
+    if (!roles.includes(req.session.user.role)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
     next();
   };
 }
@@ -270,6 +272,49 @@ app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
     );
 
     res.json({ ok: true, current_points: rows.length ? Number(rows[0].current_points) : 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const { user_id, points, reason } = req.body;
+ 
+
+    // TODO should we verify that this sponsor is actually sponsoring this driver before allowing the update?
+
+    if (typeof points !== "number") {
+      return res.status(400).json({ error: "Points must be a number" });
+    }
+
+    // Get the old points first
+    const [rows] = await pool.query(
+      "SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ?",
+      [user_id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const oldPoints = rows[0].current_points;
+
+    // Then update
+    await pool.query(
+      "UPDATE DRIVERPOINTBALANCES SET current_points = ? WHERE user_id = ?",
+      [points, user_id]
+    );
+
+    // Then record the change
+    await pool.query(
+      "INSERT INTO POINTTRANSACTIONS (user_id, point_change, reason, actor_user_id, transaction_date) VALUES (?, ?, ?, ?, NOW())",
+      [user_id, Math.abs(oldPoints - points), reason || "None", userId]
+    );
+
+    res.json({ ok: true, oldPoints, newPoints: points });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

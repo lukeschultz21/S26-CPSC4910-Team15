@@ -17,6 +17,8 @@ function getPool() {
   const database = requireEnv("DB_NAME");
   const port = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
 
+  console.log(`Creating MySQL pool with host=${host} user=${user} database=${database} port=${port}`);
+
   pool = mysql.createPool({
     host,
     user,
