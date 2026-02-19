@@ -6,6 +6,7 @@ DROP TRIGGER IF EXISTS trg_driver_application_submit_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_status_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
+DROP TRIGGER IF EXISTS trg_pointtransactions_validate;
 DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
 DROP TRIGGER IF EXISTS trg_user_password_change_to_audit;
 
@@ -185,6 +186,62 @@ BEGIN
     ),
     'LOGIN_ATTEMPT',
     NEW.attempt_id
+  );
+END$$
+
+CREATE TRIGGER trg_pointtransactions_validate
+BEFORE INSERT ON POINTTRANSACTIONS
+FOR EACH ROW
+BEGIN
+  DECLARE v_points INT;
+
+  SELECT current_points
+    INTO v_points
+  FROM DRIVERPOINTBALANCES
+  WHERE user_id = NEW.user_id
+  LIMIT 1;
+
+  IF v_points IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Invalid point transaction: no balance record for driver.';
+  END IF;
+
+  -- If this is a deduction that would go below zero, block it
+  IF NEW.point_change < 0 AND (v_points + NEW.point_change) < 0 THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Invalid point transaction: insufficient points.';
+  END IF;
+END$$
+
+
+CREATE TRIGGER trg_point_transaction_to_audit
+AFTER INSERT ON POINTTRANSACTIONS
+FOR EACH ROW
+BEGIN
+  INSERT INTO AUDITLOG (
+    action_type,
+    actor_user_id,
+    actee_user_id,
+    org_id,
+    attempted_email,
+    success,
+    details,
+    entity_type,
+    entity_id
+  )
+  VALUES (
+    'POINT_CHANGE',
+    NEW.actor_user_id,
+    NEW.user_id,
+    NEW.org_id,
+    NULL,
+    NULL,
+    JSON_OBJECT(
+      'point_change', NEW.point_change,
+      'reason', NEW.reason
+    ),
+    'POINT_TRANSACTION',
+    NEW.transaction_id
   );
 END$$
 
