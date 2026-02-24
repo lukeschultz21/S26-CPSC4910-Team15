@@ -43,6 +43,10 @@
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
       if (me.role !== "admin") return window.location.href = `/${me.role}/dashboard.html`;
+
+      // ✅ Avatar/Profile menu (safe call)
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+
       welcome.textContent = `Signed in as ${me.email}`;
 
       try {

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>My Profile</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/">Driver Points</a>
+        <span class="pill" id="rolePill">Account</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" id="backBtn" href="#">Back</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px">Profile</h2>
+      <div class="small" id="who"></div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:14px">
+        <div>
+          <label>Username</label>
+          <input id="username" placeholder="e.g., luke_s" />
+
+          <label>Title</label>
+          <input id="title" placeholder="e.g., Driver / Sponsor / Admin" />
+
+          <label>First Name</label>
+          <input id="first_name" />
+
+          <label>Last Name</label>
+          <input id="last_name" />
+
+          <label>Email</label>
+          <input id="email" type="email" />
+
+          <label>Birthday</label>
+          <input id="birthday" type="date" />
+        </div>
+
+        <div>
+          <label>Bio</label>
+          <input id="bio" placeholder="Short bio..." />
+
+          <label>Profile Photo</label>
+          <input id="photo" type="file" accept="image/*" />
+          <div class="small" style="margin-top:8px">Upload a square image for best results.</div>
+
+          <div style="margin-top:16px">
+            <button class="btn primary" id="saveBtn">Save Profile</button>
+          </div>
+
+          <div class="card" style="margin-top:18px; padding:14px">
+            <h3 style="margin:0 0 8px">Password</h3>
+            <label>New Password</label>
+            <input id="newPassword" type="password" />
+            <label>Confirm New Password</label>
+            <input id="confirmPassword" type="password" />
+            <button class="btn" style="margin-top:12px" id="pwBtn">Update Password</button>
+          </div>
+
+          <div class="msg" id="msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const msg = Team15.qs("#msg");
+
+    function setMsg(t){ msg.textContent = t || ""; }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+
+      Team15.qs("#who").textContent = `Signed in as ${me.email}`;
+      Team15.qs("#rolePill").textContent = me.role;
+
+      // Back goes to their dashboard
+      Team15.qs("#backBtn").href = `/${me.role}/dashboard.html`;
+
+      // Load profile fields
+      const { profile } = await Team15.api("/api/profile", { method: "GET" });
+      Team15.qs("#username").value = profile.username || "";
+      Team15.qs("#title").value = profile.title || "";
+      Team15.qs("#first_name").value = profile.first_name || "";
+      Team15.qs("#last_name").value = profile.last_name || "";
+      Team15.qs("#email").value = profile.email || "";
+      Team15.qs("#birthday").value = profile.birthday ? String(profile.birthday).slice(0,10) : "";
+      Team15.qs("#bio").value = profile.bio || "";
+
+      // Save profile fields
+      Team15.qs("#saveBtn").addEventListener("click", async () => {
+        setMsg("");
+        try {
+          const body = {
+            username: Team15.qs("#username").value.trim(),
+            title: Team15.qs("#title").value.trim(),
+            first_name: Team15.qs("#first_name").value.trim(),
+            last_name: Team15.qs("#last_name").value.trim(),
+            email: Team15.qs("#email").value.trim(),
+            birthday: Team15.qs("#birthday").value || null,
+            bio: Team15.qs("#bio").value.trim()
+          };
+          await Team15.api("/api/profile", { method: "PUT", body: JSON.stringify(body) });
+
+          // If a photo file was selected, upload it
+          const f = Team15.qs("#photo").files[0];
+          if (f) {
+            const fd = new FormData();
+            fd.append("photo", f);
+            const res = await fetch("/api/profile/photo", {
+              method: "POST",
+              credentials: "same-origin",
+              body: fd
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || "Photo upload failed");
+          }
+
+          setMsg("Saved.");
+        } catch (e) {
+          setMsg(e.message);
+        }
+      });
+
+      // Update password
+      Team15.qs("#pwBtn").addEventListener("click", async () => {
+        setMsg("");
+        try {
+          const p1 = Team15.qs("#newPassword").value;
+          const p2 = Team15.qs("#confirmPassword").value;
+          if (!p1 || p1.length < 8) throw new Error("Password must be at least 8 characters.");
+          if (p1 !== p2) throw new Error("Passwords do not match.");
+          await Team15.api("/api/profile/password", { method: "PUT", body: JSON.stringify({ password: p1 }) });
+          Team15.qs("#newPassword").value = "";
+          Team15.qs("#confirmPassword").value = "";
+          setMsg("Password updated.");
+        } catch (e) {
+          setMsg(e.message);
+        }
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>
