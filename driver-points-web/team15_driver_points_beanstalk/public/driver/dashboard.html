@@ -5,6 +5,78 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Driver Dashboard</title>
   <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .filter-section {
+      background: rgba(59, 130, 246, 0.05);
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      border-left: 4px solid #3b82f6;
+    }
+
+    .filter-section label {
+      color: var(--text);
+      font-weight: 500;
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .filter-controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto auto;
+      gap: 8px;
+      align-items: flex-end;
+    }
+
+    .filter-controls input[type="date"] {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+    }
+
+    .filter-controls button {
+      padding: 8px 16px;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .transaction-type {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .transaction-type.addition {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .transaction-type.deduction {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .points-positive {
+      color: #38ef7d;
+      font-weight: bold;
+    }
+
+    .points-negative {
+      color: #ef5350;
+      font-weight: bold;
+    }
+
+    @media (max-width: 768px) {
+      .filter-controls {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -19,104 +91,203 @@
       </div>
     </div>
 
-<div class="card">
-  <h2 style="margin:0 0 6px">Driver Dashboard</h2>
-  <div class="small" id="welcome"></div>
-</div>
+    <div class="card">
+      <h2 style="margin:0 0 6px">Driver Dashboard</h2>
+      <div class="small" id="welcome"></div>
+    </div>
 
-<!-- Current Points Display Section -->
-<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-  <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Current Points Balance</h3>
-  <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="pointsAmount">0</div>
-</div>
+    <!-- Current Points Display Section -->
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Current Points Balance</h3>
+      <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="pointsAmount">0</div>
+    </div>
 
-<!-- Lifetime Points Display Section -->
-<div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-  <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Lifetime Points Earned</h3>
-  <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="lifetimePoints">0</div>
-</div>
+    <!-- Lifetime Points Display Section -->
+    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Lifetime Points Earned</h3>
+      <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="lifetimePoints">0</div>
+    </div>
 
-<!-- Conversion Rate Display Section -->
-<div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-  <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
-  <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
-</div>
+    <!-- Conversion Rate Display Section -->
+    <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
+      <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
+    </div>
 
-<div class="card" style="margin-top:18px">
-  <h3 style="margin:0 0 6px">Recent Transactions</h3>
-  <div class="small">Latest 25 point transactions.</div>
-  <table class="table" id="txTable">
-    <thead>
-      <tr><th>Date</th><th>Points</th><th>Description</th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-  <div class="msg" id="msg"></div>
-</div>
+    <!-- Point History with Date Range Filter -->
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">Point History & Transactions</h3>
+      <div class="small">Track your point additions and deductions with detailed reasons.</div>
 
-  <script src="/app.js"></script>
-  <script>
-    const welcome = Team15.qs("#welcome");
-    const pointsEl = Team15.qs("#pointsAmount");
-    const lifetimeEl = Team15.qs("#lifetimePoints");
-    const conversionEl = Team15.qs("#conversionRate");
-    const tbody = Team15.qs("#txTable tbody");
-    const msg = Team15.qs("#msg");
+      <!-- Date Range Filter Section -->
+      <div class="filter-section">
+        <label>Filter by Date Range:</label>
+        <div class="filter-controls">
+          <div>
+            <label style="margin: 0 0 4px 0; font-size: 12px;">Start Date</label>
+            <input type="date" id="filterStartDate" />
+          </div>
+          <div>
+            <label style="margin: 0 0 4px 0; font-size: 12px;">End Date</label>
+            <input type="date" id="filterEndDate" />
+          </div>
+          <button class="btn" onclick="filterPointHistory()" style="margin-top: 20px;">Filter</button>
+          <button class="btn ghost" onclick="clearPointHistoryFilter()" style="margin-top: 20px;">Clear</button>
+        </div>
+      </div>
 
-    function renderRow(tx) {
-      const date = tx.transaction_date || tx.created_at || tx.date || "";
-      const pts = (tx.points_delta ?? tx.points ?? tx.amount ?? "");
-      const desc = tx.description || tx.reason || tx.memo || "";
-      return `<tr><td>${date}</td><td>${pts}</td><td>${desc}</td></tr>`;
-    }
+      <!-- Point History Table -->
+      <table class="table" id="txTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Points</th>
+            <th>Type</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="msg" id="historyMsg"></div>
+      <div class="msg" id="msg"></div>
+    </div>
 
-    async function init() {
-      const me = await Team15.loadMe();
-      if (!me) return window.location.href = "/login.html";
-      if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
+    <script src="/app.js"></script>
+    <script>
+      const welcome = Team15.qs("#welcome");
+      const pointsEl = Team15.qs("#pointsAmount");
+      const lifetimeEl = Team15.qs("#lifetimePoints");
+      const conversionEl = Team15.qs("#conversionRate");
+      const tbody = Team15.qs("#txTable tbody");
+      const msg = Team15.qs("#msg");
+      const historyMsg = Team15.qs("#historyMsg");
 
-      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
+      function renderRow(tx) {
+        // Handle the date properly - created_at comes as ISO string or timestamp
+        let dateStr = "Invalid Date";
+        if (tx.created_at) {
+          const date = new Date(tx.created_at);
+          if (!isNaN(date.getTime())) {
+            // Format as MM/DD/YYYY HH:MM
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            dateStr = `${month}/${day}/${year} ${hours}:${minutes}`;
+          }
+        }
 
-      // ✅ Avatar/Profile menu (safe call)
-      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+        const pts = tx.point_change || 0;
+        const reason = tx.reason || "No reason provided";
+        const typeClass = pts > 0 ? "addition" : "deduction";
+        const typeLabel = pts > 0 ? "✅ Addition" : "❌ Deduction";
+        const ptsClass = pts > 0 ? "points-positive" : "points-negative";
 
-      welcome.textContent = `Signed in as ${me.email}`;
-
-      try {
-        const p = await Team15.api("/api/driver/points", { method: "GET" });
-        pointsEl.textContent = p.current_points;
-      } catch (e) {
-        msg.textContent = e.message;
+        return `
+          <tr>
+            <td>${dateStr}</td>
+            <td class="${ptsClass}">${pts > 0 ? "+" : ""}${pts}</td>
+            <td><span class="transaction-type ${typeClass}">${typeLabel}</span></td>
+            <td>${reason}</td>
+          </tr>
+        `;
       }
 
-      try {
-        const t = await Team15.api("/api/driver/total-points", { method: "GET" });
-        lifetimeEl.textContent = t.total_points;
-      } catch (e) {
-        msg.textContent = e.message;
+      async function loadPointHistory() {
+        try {
+          const data = await Team15.api("/api/driver/transactions", { method: "GET" });
+          tbody.innerHTML = (data.transactions || []).map(renderRow).join("");
+          historyMsg.textContent = "";
+        } catch (e) {
+          historyMsg.textContent = "Error loading history: " + e.message;
+        }
       }
 
-      try {
-        const c = await Team15.api("/api/driver/conversion-rate", { method: "GET" });
-        conversionEl.textContent = `${c.conversion_rate} points = $1`;
-      } catch (e) {
-        msg.textContent = e.message;
+      async function filterPointHistory() {
+        try {
+          const startDate = Team15.qs("#filterStartDate").value;
+          const endDate = Team15.qs("#filterEndDate").value;
+
+          if (!startDate || !endDate) {
+            historyMsg.textContent = "⚠️ Please select both start and end dates";
+            return;
+          }
+
+          const data = await Team15.api(
+            `/api/driver/point-history-filtered?startDate=${startDate}&endDate=${endDate}`,
+            { method: "GET" }
+          );
+
+          if (!data.transactions || data.transactions.length === 0) {
+            tbody.innerHTML = `
+              <tr>
+                <td colspan="4" style="text-align: center; color: var(--muted); padding: 24px;">
+                  No transactions found in this date range
+                </td>
+              </tr>
+            `;
+            historyMsg.textContent = "";
+            return;
+          }
+
+          tbody.innerHTML = (data.transactions || []).map(renderRow).join("");
+          historyMsg.textContent = `✅ Showing ${data.transactions.length} transactions`;
+        } catch (e) {
+          historyMsg.textContent = "❌ Error filtering history: " + e.message;
+        }
       }
 
-      try {
-        const t = await Team15.api("/api/driver/transactions", { method: "GET" });
-        tbody.innerHTML = (t.transactions || []).map(renderRow).join("");
-      } catch (e) {
-        msg.textContent = e.message;
+      function clearPointHistoryFilter() {
+        Team15.qs("#filterStartDate").value = "";
+        Team15.qs("#filterEndDate").value = "";
+        historyMsg.textContent = "";
+        loadPointHistory();
       }
-    }
 
-    Team15.qs("#logoutBtn").addEventListener("click", async () => {
-      await Team15.api("/api/logout", { method: "POST" });
-      window.location.href = "/";
-    });
+      async function init() {
+        const me = await Team15.loadMe();
+        if (!me) return window.location.href = "/login.html";
+        if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
 
-    init();
-  </script>
-</body>
+        if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
+
+        // ✅ Avatar/Profile menu (safe call)
+        if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+
+        welcome.textContent = `Signed in as ${me.email}`;
+
+        try {
+          const p = await Team15.api("/api/driver/points", { method: "GET" });
+          pointsEl.textContent = p.current_points;
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+
+        try {
+          const t = await Team15.api("/api/driver/total-points", { method: "GET" });
+          lifetimeEl.textContent = t.total_points;
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+
+        try {
+          const c = await Team15.api("/api/driver/conversion-rate", { method: "GET" });
+          conversionEl.textContent = `${c.conversion_rate} points = $1`;
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+
+        // Load initial point history
+        loadPointHistory();
+      }
+
+      Team15.qs("#logoutBtn").addEventListener("click", async () => {
+        await Team15.api("/api/logout", { method: "POST" });
+        window.location.href = "/";
+      });
+
+      init();
+    </script>
+  </body>
 </html>
