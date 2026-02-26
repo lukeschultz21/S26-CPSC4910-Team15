@@ -6,6 +6,7 @@ DROP TRIGGER IF EXISTS trg_driver_application_submit_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_status_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
+DROP TRIGGER IF EXISTS trg_purchase_confirm_deduct_points;
 DROP TRIGGER IF EXISTS trg_pointtransactions_validate;
 DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
 DROP TRIGGER IF EXISTS trg_purchase_order_summary_notify;
@@ -188,6 +189,61 @@ BEGIN
     'LOGIN_ATTEMPT',
     NEW.attempt_id
   );
+END$$
+
+CREATE TRIGGER trg_purchase_confirm_deduct_points
+BEFORE UPDATE ON PURCHASES
+FOR EACH ROW
+BEGIN
+  DECLARE v_total_cost INT DEFAULT 0;
+  DECLARE v_current_points INT DEFAULT 0;
+
+  -- Only run once: when transitioning into CONFIRMED
+  IF OLD.purchase_status <> 'COMPLETED' AND NEW.purchase_status = 'COMPLETED' THEN
+
+    -- Total points cost = SUM(quantity * points_cost)
+    SELECT COALESCE(SUM(pi.quantity * pi.points_cost), 0)
+      INTO v_total_cost
+    FROM PURCHASEITEMS pi
+    WHERE pi.purchase_id = NEW.purchase_id;
+
+    -- Block confirming an empty/zero-cost purchase
+    IF v_total_cost <= 0 THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid purchase: no items or zero total cost.';
+    END IF;
+
+    -- Get current points (must exist)
+    SELECT current_points
+      INTO v_current_points
+    FROM DRIVERPOINTBALANCES
+    WHERE user_id = NEW.user_id
+    LIMIT 1;
+
+    -- Prevent confirmation if insufficient points
+    IF v_current_points < v_total_cost THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Purchase cannot be confirmed: insufficient points.';
+    END IF;
+
+    -- Deduct points
+    UPDATE DRIVERPOINTBALANCES
+    SET current_points = current_points - v_total_cost
+    WHERE user_id = NEW.user_id;
+
+    -- Record redemption in POINTTRANSACTIONS (negative change)
+    INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
+    VALUES (
+      NEW.user_id,
+      NEW.org_id,
+      -v_total_cost,
+      CONCAT('Purchase redemption (purchase_id=', NEW.purchase_id, ')'),
+      NEW.created_by_user_id
+    );
+
+    -- Stamp confirmation time
+    SET NEW.confirmed_at = NOW();
+  END IF;
 END$$
 
 CREATE TRIGGER trg_pointtransactions_validate
