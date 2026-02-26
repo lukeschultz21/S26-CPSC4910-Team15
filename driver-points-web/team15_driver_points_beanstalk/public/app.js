@@ -76,3 +76,41 @@ async function mountProfileMenu(containerSelector = ".navlinks") {
 }
 
 window.Team15 = { api, loadMe, qs, mountProfileMenu };
+
+/**
+ * If admin is impersonating another identity, show a banner and allow "Return to Admin".
+ */
+async function mountImpersonationBanner() {
+  const me = await loadMe();
+  if (!me || !me.impersonating) return;
+
+  // Avoid double mount
+  if (document.getElementById("impersonationBanner")) return;
+
+  const banner = document.createElement("div");
+  banner.id = "impersonationBanner";
+  banner.style.position = "sticky";
+  banner.style.top = "0";
+  banner.style.zIndex = "999";
+  banner.style.padding = "10px 14px";
+  banner.style.background = "#111";
+  banner.style.color = "#fff";
+  banner.style.display = "flex";
+  banner.style.alignItems = "center";
+  banner.style.justifyContent = "space-between";
+  banner.style.gap = "12px";
+  banner.innerHTML = `
+    <div style="font-weight:700">
+      You are impersonating a <span style="text-transform:capitalize">${me.role}</span> (user_id ${me.user_id}).
+    </div>
+    <button class="btn" id="returnToAdminBtn" type="button">Return to Admin</button>
+  `;
+  document.body.prepend(banner);
+
+  banner.querySelector("#returnToAdminBtn").addEventListener("click", async () => {
+    const data = await api("/api/admin/stop-impersonation", { method: "POST" });
+    window.location.href = data.redirect || "/admin/dashboard.html";
+  });
+}
+
+window.Team15.mountImpersonationBanner = mountImpersonationBanner;

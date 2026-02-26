@@ -10,7 +10,7 @@
   <div class="container">
     <div class="nav">
       <div class="brand">
-        <a href="/">Driver Points</a>
+        <a href="/home" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
         <span class="pill">Driver</span>
       </div>
       <div class="navlinks">
@@ -74,6 +74,8 @@
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
       if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
+
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
 
       // ✅ Avatar/Profile menu (safe call)
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");

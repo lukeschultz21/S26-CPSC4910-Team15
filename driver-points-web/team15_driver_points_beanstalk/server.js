@@ -207,13 +207,23 @@ app.post("/api/profile/photo", requireAuth, upload.single("photo"), async (req, 
 
 app.post("/api/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+    // Frontend can send either "email" or "identifier"
+    const identifier = (req.body.identifier || req.body.email || "").trim();
+    const { password } = req.body;
+
+    if (!identifier || !password) {
+      return res.status(400).json({ error: "Email/username and password required" });
+    }
 
     const pool = getPool();
+
+    // Login with either email OR username
     const [rows] = await pool.query(
-      "SELECT user_id, email, password_hash, status, first_name, last_name FROM USERS WHERE email = ? LIMIT 1",
-      [email]
+      `SELECT user_id, email, username, password_hash, status, first_name, last_name
+       FROM USERS
+       WHERE email = ? OR username = ?
+       LIMIT 1`,
+      [identifier, identifier]
     );
 
     if (!rows.length) return res.status(401).json({ error: "Invalid credentials" });
@@ -228,6 +238,7 @@ app.post("/api/login", async (req, res) => {
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
     const role = await getRole(pool, user.user_id);
+
     req.session.user = {
       user_id: user.user_id,
       email: user.email,
@@ -326,8 +337,19 @@ app.post("/api/change-password", requireAuth, async (req, res) => {
 
 app.post("/api/register", async (req, res) => {
   try {
-    const { email, password, first_name, last_name } = req.body;
+    const {
+      email,
+      password,
+      first_name,
+      last_name,
+      username,
+      title,
+      bio,
+      birthday
+    } = req.body;
+
     if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+    if (!username) return res.status(400).json({ error: "Username is required" });
 
     // Password validation rules (backend)
     const PASSWORD_RULES = {
@@ -339,37 +361,37 @@ app.post("/api/register", async (req, res) => {
       specialChars: '!@#$%^&*()_+-=[]{}|;:",.<>?'
     };
 
-    // Validate password
     const errors = [];
-    if (password.length < PASSWORD_RULES.minLength) {
-      errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
-    }
-    if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password)) {
-      errors.push("Password must contain at least 1 uppercase letter");
-    }
-    if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password)) {
-      errors.push("Password must contain at least 1 lowercase letter");
-    }
-    if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(password)) {
-      errors.push("Password must contain at least 1 number");
-    }
+    if (password.length < PASSWORD_RULES.minLength) errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
+    if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password)) errors.push("Password must contain at least 1 uppercase letter");
+    if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password)) errors.push("Password must contain at least 1 lowercase letter");
+    if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(password)) errors.push("Password must contain at least 1 number");
     if (PASSWORD_RULES.requireSpecialChar) {
       const hasSpecialChar = PASSWORD_RULES.specialChars.split("").some((char) => password.includes(char));
-      if (!hasSpecialChar) {
-        errors.push("Password must contain at least 1 special character");
-      }
+      if (!hasSpecialChar) errors.push("Password must contain at least 1 special character");
     }
-
-    if (errors.length > 0) {
-      return res.status(400).json({ error: errors[0] });
-    }
+    if (errors.length) return res.status(400).json({ error: errors[0] });
 
     const pool = getPool();
     const hash = await bcrypt.hash(password, 10);
 
+    // Everyone starts as a plain "user". getRole() will later return sponsor/admin/driver based on related tables.
+
     const [result] = await pool.query(
-      "INSERT INTO USERS (email, password_hash, first_name, last_name, status, created_at) VALUES (?, ?, ?, ?, 'active', NOW())",
-      [email, hash, first_name || null, last_name || null]
+      `INSERT INTO USERS
+        (email, password_hash, first_name, last_name, username, title, bio, birthday, status, created_at)
+       VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())`,
+      [
+        email,
+        hash,
+        first_name || null,
+        last_name || null,
+        username,
+        title || null,
+        bio || null,
+        birthday || null
+      ]
     );
 
     req.session.user = {
@@ -378,10 +400,13 @@ app.post("/api/register", async (req, res) => {
       role: "user",
       name: `${first_name || ""} ${last_name || ""}`.trim()
     };
+
     res.json({ ok: true, redirect: "/user/dashboard.html" });
   } catch (e) {
-    if (String(e.message || "").toLowerCase().includes("duplicate")) {
-      return res.status(409).json({ error: "Email already exists" });
+    const msg = String(e.message || "").toLowerCase();
+    if (msg.includes("duplicate")) {
+      // This will trigger if you have UNIQUE constraints on email and/or username
+      return res.status(409).json({ error: "Email or username already exists" });
     }
     res.status(500).json({ error: e.message });
   }
