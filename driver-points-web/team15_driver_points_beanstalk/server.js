@@ -522,8 +522,8 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
 
     // Record the change with reason
     await pool.query(
-      "INSERT INTO POINTTRANSACTIONS (user_id, point_change, reason, actor_user_id, transaction_date) VALUES (?, ?, ?, ?, NOW())",
-      [user_id, point_change, reason.trim(), actorUserId]
+      "INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id) VALUES (?, ?, ?, ?, ?)",
+      [user_id, 1, point_change, reason.trim(), actorUserId]
     );
 
     res.json({ ok: true, oldPoints, newPoints });
@@ -538,7 +538,7 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
     const userId = req.session.user.user_id;
 
     const [rows] = await pool.query(
-      "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ? ORDER BY transaction_date DESC LIMIT 25",
+      "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ? ORDER BY created_at DESC LIMIT 25",
       [userId]
     );
 
@@ -560,15 +560,15 @@ app.get("/api/driver/point-history-filtered", requireRole("driver"), async (req,
 
     // Add date range filtering if provided
     if (startDate) {
-      query += " AND transaction_date >= ?";
+      query += " AND created_at >= ?";
       params.push(new Date(startDate));
     }
     if (endDate) {
-      query += " AND transaction_date <= ?";
+      query += " AND created_at <= ?";
       params.push(new Date(endDate));
     }
 
-    query += " ORDER BY transaction_date DESC LIMIT 100";
+    query += " ORDER BY created_at DESC LIMIT 100";
 
     const [rows] = await pool.query(query, params);
 
@@ -595,13 +595,13 @@ app.get("/api/sponsor/driver-dollars", requireRole("sponsor"), async (req, res) 
     // If the sponsor is found, get the point to cent conversion rate for that org
     const orgId = orgRows[0].org_id;
     const [conversionRows] = await pool.query(
-      "SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
       [orgId]
     );
     if (!conversionRows.length) {
       return res.status(404).json({ error: "Conversion rate not found" });
     }
-    const conversionRate = conversionRows[0].point_to_cent_conversion;
+    const conversionRate = conversionRows[0].cents_per_point;
     const dollars = (points * conversionRate) / 100;
     res.json({ ok: true, dollars: `$${dollars.toFixed(2)}` });
   } catch (e) {
@@ -616,11 +616,11 @@ app.get("/api/sponsor/conversion-rate", requireRole("sponsor"), async (req, res)
     const [orgRows] = await pool.query("SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1", [userId]);
     if (!orgRows.length) return res.status(404).json({ error: "Sponsor not found" });
     const [conversionRows] = await pool.query(
-      "SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
       [orgRows[0].org_id]
     );
     if (!conversionRows.length) return res.status(404).json({ error: "Conversion rate not found" });
-    res.json({ ok: true, conversion_rate: conversionRows[0].point_to_cent_conversion });
+    res.json({ ok: true, conversion_rate: conversionRows[0].cents_per_point });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -642,7 +642,7 @@ app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) =
 
     // Get conversion rate
     const [conversionRows] = await pool.query(
-      "SELECT point_to_cent_conversion FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
       [orgId]
     );
 
@@ -650,7 +650,7 @@ app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) =
       return res.status(404).json({ error: "Conversion rate not found" });
     }
 
-    res.json({ ok: true, conversion_rate: conversionRows[0].point_to_cent_conversion });
+    res.json({ ok: true, conversion_rate: conversionRows[0].cents_per_point });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -691,11 +691,11 @@ app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => 
         transaction_id,
         point_change,
         reason,
-        transaction_date,
+        created_at,
         actor_user_id
       FROM POINTTRANSACTIONS 
       WHERE user_id = ? 
-      ORDER BY transaction_date DESC 
+      ORDER BY created_at DESC 
       LIMIT 100`,
       [userId]
     );

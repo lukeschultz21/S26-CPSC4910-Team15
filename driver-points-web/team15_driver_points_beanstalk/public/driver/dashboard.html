@@ -163,7 +163,21 @@
       const historyMsg = Team15.qs("#historyMsg");
 
       function renderRow(tx) {
-        const date = new Date(tx.transaction_date).toLocaleDateString();
+        // Handle the date properly - created_at comes as ISO string or timestamp
+        let dateStr = "Invalid Date";
+        if (tx.created_at) {
+          const date = new Date(tx.created_at);
+          if (!isNaN(date.getTime())) {
+            // Format as MM/DD/YYYY HH:MM
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            dateStr = `${month}/${day}/${year} ${hours}:${minutes}`;
+          }
+        }
+
         const pts = tx.point_change || 0;
         const reason = tx.reason || "No reason provided";
         const typeClass = pts > 0 ? "addition" : "deduction";
@@ -172,7 +186,7 @@
 
         return `
           <tr>
-            <td>${date}</td>
+            <td>${dateStr}</td>
             <td class="${ptsClass}">${pts > 0 ? "+" : ""}${pts}</td>
             <td><span class="transaction-type ${typeClass}">${typeLabel}</span></td>
             <td>${reason}</td>
