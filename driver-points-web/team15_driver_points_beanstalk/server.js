@@ -126,7 +126,6 @@ app.put("/api/profile", requireAuth, async (req, res) => {
 
     const { username, title, first_name, last_name, email, birthday, bio } = req.body;
 
-    // NOTE: removed updated_at because your USERS table doesn't have it
     await pool.query(
       `UPDATE USERS
        SET username = ?,
@@ -484,10 +483,19 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     const actorUserId = req.session.user.user_id;
     const { user_id, point_change, reason } = req.body;
 
-    // TODO should we verify that this sponsor is actually sponsoring this driver before allowing the update?
-
+    // Validate point_change is a number
     if (typeof point_change !== "number") {
       return res.status(400).json({ error: "Points must be a number" });
+    }
+
+    // Prevent zero transactions
+    if (point_change === 0) {
+      return res.status(400).json({ error: "Point change cannot be zero" });
+    }
+
+    // Validate reason is provided
+    if (!reason || reason.trim() === "") {
+      return res.status(400).json({ error: "Reason is required for point changes" });
     }
 
     // Get the old points first
@@ -498,20 +506,27 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     }
 
     const oldPoints = rows[0].current_points;
+    const newPoints = oldPoints + point_change;
 
-    // Then update
-    await pool.query("UPDATE DRIVERPOINTBALANCES SET current_points = ? WHERE user_id = ?", [
-      oldPoints + point_change,
-      user_id
-    ]);
+    // Prevent negative point balance
+    if (newPoints < 0) {
+      return res.status(400).json({
+        error: "Insufficient points. Cannot deduct more points than available.",
+        current_points: oldPoints,
+        attempted_change: point_change
+      });
+    }
 
-    // Then record the change
+    // Update points
+    await pool.query("UPDATE DRIVERPOINTBALANCES SET current_points = ? WHERE user_id = ?", [newPoints, user_id]);
+
+    // Record the change with reason
     await pool.query(
       "INSERT INTO POINTTRANSACTIONS (user_id, point_change, reason, actor_user_id, transaction_date) VALUES (?, ?, ?, ?, NOW())",
-      [user_id, point_change, reason || "None", actorUserId]
+      [user_id, point_change, reason.trim(), actorUserId]
     );
 
-    res.json({ ok: true, oldPoints, newPoints: oldPoints + point_change });
+    res.json({ ok: true, oldPoints, newPoints });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -526,6 +541,36 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
       "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ? ORDER BY transaction_date DESC LIMIT 25",
       [userId]
     );
+
+    res.json({ ok: true, transactions: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get point history with date range filtering
+app.get("/api/driver/point-history-filtered", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const { startDate, endDate } = req.query;
+
+    let query = "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ?";
+    const params = [userId];
+
+    // Add date range filtering if provided
+    if (startDate) {
+      query += " AND transaction_date >= ?";
+      params.push(new Date(startDate));
+    }
+    if (endDate) {
+      query += " AND transaction_date <= ?";
+      params.push(new Date(endDate));
+    }
+
+    query += " ORDER BY transaction_date DESC LIMIT 100";
+
+    const [rows] = await pool.query(query, params);
 
     res.json({ ok: true, transactions: rows });
   } catch (e) {
@@ -646,11 +691,11 @@ app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => 
         transaction_id,
         point_change,
         reason,
-        created_at as transaction_date,
+        transaction_date,
         actor_user_id
       FROM POINTTRANSACTIONS 
       WHERE user_id = ? 
-      ORDER BY created_at DESC 
+      ORDER BY transaction_date DESC 
       LIMIT 100`,
       [userId]
     );
