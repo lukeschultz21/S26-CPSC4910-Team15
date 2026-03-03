@@ -76,6 +76,14 @@ async function getRole(pool, userId) {
   return "user";
 }
 
+async function getSponsorOrgId(pool, sponsorUserId) {
+  const [rows] = await pool.query(
+    "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+    [sponsorUserId]
+  );
+  return rows.length ? Number(rows[0].org_id) : null;
+}
+
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.get("/dbcheck", async (req, res) => {
@@ -621,6 +629,51 @@ app.get("/api/sponsor/conversion-rate", requireRole("sponsor"), async (req, res)
     );
     if (!conversionRows.length) return res.status(404).json({ error: "Conversion rate not found" });
     res.json({ ok: true, conversion_rate: conversionRows[0].cents_per_point });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/driver-balances", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const sponsorUserId = req.session.user.user_id;
+
+    const orgId = await getSponsorOrgId(pool, sponsorUserId);
+    if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
+
+    const [rows] = await pool.query(
+      `SELECT *
+       FROM vw_sponsor_driver_point_balances
+       WHERE org_id = ?
+       ORDER BY last_name, first_name, driver_user_id`,
+      [orgId]
+    );
+
+    res.json({ ok: true, org_id: orgId, drivers: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/driver-point-transactions", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const sponsorUserId = req.session.user.user_id;
+
+    const orgId = await getSponsorOrgId(pool, sponsorUserId);
+    if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
+
+    const [rows] = await pool.query(
+      `SELECT *
+       FROM vw_sponsor_driver_point_transactions
+       WHERE org_id = ?
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [orgId]
+    );
+
+    res.json({ ok: true, org_id: orgId, transactions: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
