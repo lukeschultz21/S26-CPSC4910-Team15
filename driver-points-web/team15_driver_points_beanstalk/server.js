@@ -556,6 +556,33 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
   }
 });
 
+app.get("/api/driver/notifications", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    const [rows] = await pool.query(
+      `SELECT
+         notification_id,
+         notification_type,
+         message,
+         is_read,
+         created_at,
+         entity_type,
+         entity_id
+       FROM vw_user_notifications
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [userId]
+    );
+
+    res.json({ ok: true, notifications: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Get point history with date range filtering
 app.get("/api/driver/point-history-filtered", requireRole("driver"), async (req, res) => {
   try {

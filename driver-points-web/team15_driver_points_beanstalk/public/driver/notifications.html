@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Notifications</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/driver/dashboard.html" class="brand-logo">
+          <img src="/images/car-logo.png" alt="Driver Points" />
+        </a>
+        <span class="pill">Driver</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/driver/dashboard.html">Back</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Notifications</h2>
+      <div class="small" id="subtitle"></div>
+      <div class="msg" id="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <table class="table" id="nTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Message</th>
+            <th>Read</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const subtitle = Team15.qs("#subtitle");
+    const msg = Team15.qs("#msg");
+    const tbody = Team15.qs("#nTable tbody");
+
+    function fmtDate(iso) {
+      if (!iso) return "";
+      return new Date(iso).toLocaleString();
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
+
+      subtitle.textContent = `Signed in as ${me.email}`;
+
+      try {
+        const data = await Team15.api("/api/driver/notifications", { method: "GET" });
+        const notes = data.notifications || [];
+
+        if (!notes.length) {
+          msg.textContent = "No notifications yet.";
+          tbody.innerHTML = "";
+          return;
+        }
+
+        msg.textContent = "";
+
+        tbody.innerHTML = notes.map(n => `
+          <tr>
+            <td>${fmtDate(n.created_at)}</td>
+            <td>${n.notification_type || ""}</td>
+            <td>${n.message || ""}</td>
+            <td>${n.is_read ? "Yes" : "No"}</td>
+          </tr>
+        `).join("");
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }
+
+    Team15.qs("#logoutBtn").addEventListener("click", async () => {
+      await Team15.api("/api/logout", { method: "POST" });
+      window.location.href = "/";
+    });
+
+    init();
+  </script>
+</body>
+</html>
