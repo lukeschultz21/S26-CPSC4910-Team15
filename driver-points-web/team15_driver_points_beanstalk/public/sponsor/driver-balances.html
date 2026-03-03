@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Driver Balances</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/sponsor/dashboard.html" class="brand-logo">
+          <img src="/images/car-logo.png" alt="Driver Points" />
+        </a>
+        <span class="pill">Sponsor</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/sponsor/dashboard.html">Back</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Driver Point Balances</h2>
+      <div class="small" id="subtitle"></div>
+      <div class="msg" id="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <table class="table" id="balTable">
+        <thead>
+          <tr>
+            <th>Driver</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Current Points</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const subtitle = Team15.qs("#subtitle");
+    const msg = Team15.qs("#msg");
+    const tbody = Team15.qs("#balTable tbody");
+
+    function fmtDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return d.toLocaleString();
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+
+      subtitle.textContent = `Signed in as ${me.email}`;
+
+      try {
+        const data = await Team15.api("/api/sponsor/driver-balances", { method: "GET" });
+        const drivers = data.drivers || [];
+
+        if (!drivers.length) {
+          msg.textContent = "No drivers found for your organization yet.";
+          tbody.innerHTML = "";
+          return;
+        }
+
+        msg.textContent = "";
+
+        tbody.innerHTML = drivers.map(d => {
+          const name = `${d.first_name || ""} ${d.last_name || ""}`.trim() || d.driver_user_id;
+          return `
+            <tr>
+              <td>${name}</td>
+              <td>${d.driver_email || ""}</td>
+              <td>${d.driver_status || ""}</td>
+              <td>${Number(d.current_points)}</td>
+              <td>${fmtDate(d.balance_updated_at)}</td>
+            </tr>
+          `;
+        }).join("");
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }
+
+    Team15.qs("#logoutBtn").addEventListener("click", async () => {
+      await Team15.api("/api/logout", { method: "POST" });
+      window.location.href = "/";
+    });
+
+    init();
+  </script>
+</body>
+</html>
