@@ -6,8 +6,11 @@ DROP TRIGGER IF EXISTS trg_driver_application_submit_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_status_to_audit;
 DROP TRIGGER IF EXISTS trg_driver_application_decision_notify;
 DROP TRIGGER IF EXISTS trg_login_attempt_to_audit;
+DROP TRIGGER IF EXISTS trg_purchase_confirm_deduct_points;
+DROP TRIGGER IF EXISTS trg_pointtransactions_validate;
 DROP TRIGGER IF EXISTS trg_point_transaction_to_audit;
-DROP TRIGGER IF EXISTS trg_user_password_change_to_audit;
+DROP TRIGGER IF EXISTS trg_purchase_order_summary_notify;
+DROP TRIGGER IF EXISTS trg_user_password_change_notify_audit;
 
 DELIMITER $$
 
@@ -188,6 +191,85 @@ BEGIN
   );
 END$$
 
+CREATE TRIGGER trg_purchase_confirm_deduct_points
+BEFORE UPDATE ON PURCHASES
+FOR EACH ROW
+BEGIN
+  DECLARE v_total_cost INT DEFAULT 0;
+  DECLARE v_current_points INT DEFAULT 0;
+
+  -- Only run once: when transitioning into CONFIRMED
+  IF OLD.purchase_status <> 'COMPLETED' AND NEW.purchase_status = 'COMPLETED' THEN
+
+    -- Total points cost = SUM(quantity * points_cost)
+    SELECT COALESCE(SUM(pi.quantity * pi.points_cost), 0)
+      INTO v_total_cost
+    FROM PURCHASEITEMS pi
+    WHERE pi.purchase_id = NEW.purchase_id;
+
+    -- Block confirming an empty/zero-cost purchase
+    IF v_total_cost <= 0 THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Invalid purchase: no items or zero total cost.';
+    END IF;
+
+    -- Get current points (must exist)
+    SELECT current_points
+      INTO v_current_points
+    FROM DRIVERPOINTBALANCES
+    WHERE user_id = NEW.user_id
+    LIMIT 1;
+
+    -- Prevent confirmation if insufficient points
+    IF v_current_points < v_total_cost THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Purchase cannot be confirmed: insufficient points.';
+    END IF;
+
+    -- Deduct points
+    UPDATE DRIVERPOINTBALANCES
+    SET current_points = current_points - v_total_cost
+    WHERE user_id = NEW.user_id;
+
+    -- Record redemption in POINTTRANSACTIONS (negative change)
+    INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
+    VALUES (
+      NEW.user_id,
+      NEW.org_id,
+      -v_total_cost,
+      CONCAT('Purchase redemption (purchase_id=', NEW.purchase_id, ')'),
+      NEW.created_by_user_id
+    );
+
+    -- Stamp confirmation time
+    SET NEW.confirmed_at = NOW();
+  END IF;
+END$$
+
+CREATE TRIGGER trg_pointtransactions_validate
+BEFORE INSERT ON POINTTRANSACTIONS
+FOR EACH ROW
+BEGIN
+  DECLARE v_points INT;
+
+  SELECT current_points
+    INTO v_points
+  FROM DRIVERPOINTBALANCES
+  WHERE user_id = NEW.user_id
+  LIMIT 1;
+
+  IF v_points IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Invalid point transaction: no balance record for driver.';
+  END IF;
+
+  -- If this is a deduction that would go below zero, block it
+  IF NEW.point_change < 0 AND (v_points + NEW.point_change) < 0 THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Invalid point transaction: insufficient points.';
+  END IF;
+END$$
+
 CREATE TRIGGER trg_point_transaction_to_audit
 AFTER INSERT ON POINTTRANSACTIONS
 FOR EACH ROW
@@ -219,12 +301,40 @@ BEGIN
   );
 END$$
 
-CREATE TRIGGER trg_user_password_change_to_audit
+CREATE TRIGGER trg_purchase_order_summary_notify
+AFTER INSERT ON PURCHASES
+FOR EACH ROW
+BEGIN
+  DECLARE v_enabled BOOLEAN;
+
+  -- Read driver's global preference
+  SELECT notifications_enabled
+    INTO v_enabled
+  FROM USERS
+  WHERE user_id = NEW.user_id
+  LIMIT 1;
+
+  -- Only create notification if enabled
+  IF v_enabled = TRUE THEN
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'ORDER_SUMMARY',
+      CONCAT('Order #', NEW.purchase_id, ' has been placed.'),
+      'PURCHASE',
+      NEW.purchase_id
+    );
+  END IF;
+END$$
+
+CREATE TRIGGER trg_user_password_change_notify_audit
 AFTER UPDATE ON USERS
 FOR EACH ROW
 BEGIN
-  -- Only log when the password actually changes
+  -- Only fire when the password actually changes
   IF OLD.password_hash <> NEW.password_hash THEN
+
+    -- 1) Audit log (existing behavior)
     INSERT INTO AUDITLOG (
       action_type,
       actor_user_id,
@@ -238,7 +348,7 @@ BEGIN
     )
     VALUES (
       'PASSWORD_CHANGE',
-      NEW.user_id,      
+      NEW.user_id,
       NEW.user_id,
       NULL,
       NULL,
@@ -247,6 +357,17 @@ BEGIN
       'USERS',
       NEW.user_id
     );
+
+    -- 2) Mandatory notification (do NOT gate behind notifications_enabled)
+    INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+    VALUES (
+      NEW.user_id,
+      'PASSWORD_CHANGED',
+      'Your password was changed. If this wasn’t you, please contact support immediately.',
+      'USERS',
+      NEW.user_id
+    );
+
   END IF;
 END$$
 

@@ -13,6 +13,7 @@ CREATE TABLE USERS (
   last_name VARCHAR(100),
   phone VARCHAR(50),
   status ENUM('active','locked','disabled') NOT NULL DEFAULT 'active',
+  notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE, -- for use in triggers specific to notification type. 
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -61,6 +62,24 @@ CREATE TABLE ADMIN (
   FOREIGN KEY (user_id) REFERENCES USERS(user_id)
 );
 
+CREATE TABLE TEAM (
+  team_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  first_name VARCHAR(100) NOT NULL,
+  last_name VARCHAR(100) NOT NULL,
+  role VARCHAR(100) NOT NULL,
+  bio VARCHAR(500),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert team members
+INSERT INTO TEAM (first_name, last_name, role, bio) VALUES
+('Luke', 'Schultz', 'Team Lead', 'Leads the team and oversees project development'),
+('Noah', 'Samol', 'Developer', 'Full-stack developer focused on backend systems'),
+('Miles', 'Rockow', 'Developer', 'Frontend and UI/UX specialist'),
+('Scott', 'Shaffer', 'Developer', 'Database and performance optimization expert'),
+('Uyen', 'Nguyen', 'Developer', 'Frontend and UI/UX specialist');
+
 CREATE TABLE DRIVER_SPONSOR_HISTORY (
   history_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT UNSIGNED NOT NULL,
@@ -95,6 +114,8 @@ CREATE TABLE PURCHASES (
   user_id BIGINT UNSIGNED NOT NULL,   -- driver user_id
   org_id BIGINT UNSIGNED NOT NULL,
   created_by_user_id BIGINT UNSIGNED NOT NULL,
+  purchase_status ENUM('PENDING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  confirmed_at DATETIME NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -131,6 +152,8 @@ CREATE TABLE POINTTRANSACTIONS (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   actor_user_id BIGINT UNSIGNED NOT NULL,
 
+  CONSTRAINT check_invalid CHECK (point_change <> 0),
+
   FOREIGN KEY (user_id) REFERENCES DRIVERS(user_id),
   FOREIGN KEY (org_id) REFERENCES SPONSORORGANIZATION(org_id),
   FOREIGN KEY (actor_user_id) REFERENCES USERS(user_id)
@@ -165,5 +188,9 @@ CREATE TABLE NOTIFICATIONS (
   entity_type VARCHAR(50) NULL,
   entity_id BIGINT UNSIGNED NULL,
 
-  FOREIGN KEY (user_id) REFERENCES USERS(user_id)
+  FOREIGN KEY (user_id) REFERENCES USERS(user_id),
+
+  INDEX idx_notifications_user_created (user_id, created_at),
+  INDEX idx_notifications_created (created_at),
+  INDEX idx_notifications_type_created (notification_type, created_at)
 );

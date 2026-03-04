@@ -137,7 +137,7 @@
   <div class="container">
     <div class="nav">
       <div class="brand">
-        <a href="/">Driver Points</a>
+        <a href="/home" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
         <span class="pill">Register</span>
       </div>
       <div class="navlinks">
@@ -153,6 +153,17 @@
       <form id="regForm">
         <div class="row">
           <div>
+            <label>Username</label>
+            <input name="username" autocomplete="username" required />
+          </div>
+          <div>
+            <label>Title</label>
+            <input name="title" placeholder="e.g., Driver" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
             <label>First name</label>
             <input name="first_name" autocomplete="given-name" />
           </div>
@@ -164,6 +175,12 @@
 
         <label>Email</label>
         <input name="email" type="email" autocomplete="email" required />
+
+        <label>Birthday</label>
+        <input name="birthday" type="date" autocomplete="bday" />
+
+        <label>Bio</label>
+        <input name="bio" placeholder="Short bio..." />
 
         <label>Password</label>
         <input name="password" type="password" autocomplete="new-password" required id="passwordInput" />

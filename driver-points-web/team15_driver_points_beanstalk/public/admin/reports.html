@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Reports</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/home" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
+        <span class="pill">Admin</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/admin/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/change-password.html">Change Password</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Admin Reports</h2>
+      <p class="sub">These reports satisfy the "generate admin reports" requirement. Use filters in your DB queries later if needed.</p>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
+        <button class="btn" data-r="users">Users by Role</button>
+        <button class="btn" data-r="drivers">Drivers</button>
+        <button class="btn" data-r="points">Points Summary</button>
+      </div>
+
+      <div class="msg" id="msg" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 10px" id="title">Select a report</h3>
+      <div style="overflow:auto">
+        <table class="table" id="tbl">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const msg = Team15.qs('#msg');
+    const title = Team15.qs('#title');
+    const thead = Team15.qs('#tbl thead');
+    const tbody = Team15.qs('#tbl tbody');
+
+    function esc(s){
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderTable(rows){
+      if(!rows || !rows.length){
+        thead.innerHTML = '';
+        tbody.innerHTML = `<tr><td class="small">No rows</td></tr>`;
+        return;
+      }
+      const cols = Object.keys(rows[0]);
+      thead.innerHTML = `<tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
+      tbody.innerHTML = rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
+    }
+
+    async function init(){
+      const me = await Team15.loadMe();
+      if(!me) return window.location.href='/login.html';
+      if(me.role !== 'admin') return window.location.href=`/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+    }
+
+    document.addEventListener('click', async (e)=>{
+      const btn = e.target.closest('button[data-r]');
+      if(!btn) return;
+      msg.textContent = '';
+      const r = btn.getAttribute('data-r');
+      try{
+        if(r==='users'){
+          title.textContent = 'Users by Role';
+          const data = await Team15.api('/api/admin/reports/users-by-role', {method:'GET'});
+          renderTable(data.rows);
+        }
+        if(r==='drivers'){
+          title.textContent = 'Drivers';
+          const data = await Team15.api('/api/admin/reports/drivers', {method:'GET'});
+          renderTable(data.rows);
+        }
+        if(r==='points'){
+          title.textContent = 'Points Summary (balances + totals)';
+          const data = await Team15.api('/api/admin/reports/points', {method:'GET'});
+          // show balances if available, else totals
+          const rows = (data.balances && data.balances.length) ? data.balances : data.totals;
+          renderTable(rows);
+        }
+      }catch(err){
+        msg.textContent = err.message;
+      }
+    });
+
+    Team15.qs('#logoutBtn').addEventListener('click', async ()=>{
+      await Team15.api('/api/logout', {method:'POST'});
+      window.location.href='/';
+    });
+
+    init();
+  </script>
+</body>
+</html>

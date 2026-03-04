@@ -10,7 +10,7 @@
   <div class="container">
     <div class="nav">
       <div class="brand">
-        <a href="/">Driver Points</a>
+        <a href="/home" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
         <span class="pill">User</span>
       </div>
       <div class="navlinks">
@@ -34,8 +34,15 @@
     async function init() {
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
-      Team15.qs("#welcome").textContent = `Signed in as ${me.email}`;
+
       if (me.role !== "user") return window.location.href = `/${me.role}/dashboard.html`;
+
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
+
+      // ✅ Avatar/Profile menu (safe call)
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+
+      Team15.qs("#welcome").textContent = `Signed in as ${me.email}`;
     }
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {

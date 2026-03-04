@@ -10,11 +10,13 @@
   <div class="container">
     <div class="nav">
       <div class="brand">
-        <a href="/">Driver Points</a>
+        <a href="/home" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
         <span class="pill">Sponsor</span>
       </div>
       <div class="navlinks">
         <a class="btn ghost" href="/change-password.html">Change Password</a>
+        <a class="btn ghost" href="/sponsor/driver-balances.html">Driver Balances</a>
+        <a class="btn ghost" href="/sponsor/driver-point-tracking.html">Driver Point Tracking</a>
         <button class="btn" id="logoutBtn">Logout</button>
       </div>
     </div>
@@ -23,6 +25,12 @@
       <h2 style="margin:0 0 6px">Sponsor Dashboard</h2>
       <div class="small" id="welcome"></div>
       <p class="sub" style="margin-top:12px">Shows pending driver applications (example endpoint).</p>
+    </div>
+
+    <!-- Conversion Rate Display -->
+    <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
+      <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -35,19 +43,52 @@
       </table>
       <div class="msg" id="msg"></div>
     </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">Promote Sponsor</h3>
+      <p class="sub">Sponsors can promote other users to sponsors within the same organization.</p>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="promo">Username, Email, or User ID</label>
+          <input id="promo" placeholder="e.g. jdoe or jdoe@gmail.com or 12" />
+        </div>
+        <div style="align-self:flex-end">
+          <button class="btn" id="promoBtn">Make Sponsor</button>
+        </div>
+      </div>
+
+      <div class="msg" id="promoMsg"></div>
+    </div>
   </div>
 
   <script src="/app.js"></script>
   <script>
     const welcome = Team15.qs("#welcome");
+    const conversionEl = Team15.qs("#conversionRate");
     const tbody = Team15.qs("#appTable tbody");
     const msg = Team15.qs("#msg");
+    const promoInput = Team15.qs("#promo");
+    const promoMsg = Team15.qs("#promoMsg");
 
     async function init() {
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
       if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
+
+      // ✅ Avatar/Profile menu (safe call)
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+
       welcome.textContent = `Signed in as ${me.email}`;
+
+      try {
+        const data = await Team15.api("/api/sponsor/conversion-rate", { method: "GET" });
+        conversionEl.textContent = `${data.conversion_rate} points = $1`;
+      } catch (e) {
+        msg.textContent = e.message;
+      }
 
       try {
         const data = await Team15.api("/api/sponsor/pending-applications", { method: "GET" });
@@ -66,6 +107,25 @@
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
       await Team15.api("/api/logout", { method: "POST" });
       window.location.href = "/";
+    });
+
+    Team15.qs("#promoBtn").addEventListener("click", async () => {
+      promoMsg.textContent = "";
+      const identifier = promoInput.value.trim();
+      if (!identifier) return (promoMsg.textContent = "Enter a username, email, or user id");
+
+      try {
+        await Team15.api("/api/sponsor/make-sponsor", {
+          method: "POST",
+          body: JSON.stringify({ identifier })
+        });
+        promoMsg.style.color = "#b8c3e6";
+        promoMsg.textContent = `Promoted ${identifier} to sponsor.`;
+        promoInput.value = "";
+      } catch (e) {
+        promoMsg.style.color = "var(--danger)";
+        promoMsg.textContent = e.message;
+      }
     });
 
     init();
