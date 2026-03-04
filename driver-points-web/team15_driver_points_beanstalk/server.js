@@ -100,6 +100,24 @@ app.get("/api/me", (req, res) => {
   res.json({ user: req.session.user || null });
 });
 
+// ---------------------------------
+// Role-aware navigation helpers
+// ---------------------------------
+// Many pages historically linked the logo to /home. Express had no such route,
+// resulting in "Cannot GET /home". We now support both /home and /dashboard.
+function redirectToRoleDashboard(req, res) {
+  const user = req.session.user;
+  if (!user) return res.redirect("/");
+
+  if (user.role === "admin") return res.redirect("/admin/dashboard.html");
+  if (user.role === "sponsor") return res.redirect("/sponsor/dashboard.html");
+  if (user.role === "driver") return res.redirect("/driver/dashboard.html");
+  return res.redirect("/user/dashboard.html");
+}
+
+app.get("/home", redirectToRoleDashboard);
+app.get("/dashboard", redirectToRoleDashboard);
+
 // -----------------------------
 // Profile APIs (used by avatar menu + profile page)
 // -----------------------------
@@ -456,6 +474,56 @@ app.get("/api/about/team", async (req, res) => {
   }
 });
 
+// Admin: assume identity as another user (impersonation)
+app.post("/api/admin/impersonate", requireRole("admin"), async (req, res) => {
+  try {
+    const { user_id, as_role } = req.body || {};
+    if (!user_id) return res.status(400).json({ error: "user_id required" });
+
+    const pool = getPool();
+
+    // pull target user info
+    const [rows] = await pool.query(
+      `SELECT user_id, email, first_name, last_name, status
+       FROM USERS
+       WHERE user_id = ?
+       LIMIT 1`,
+      [user_id]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: "User not found" });
+    const target = rows[0];
+
+    // determine the target's actual role
+    const targetRole = await getRole(pool, target.user_id);
+
+    // only allow assuming sponsor/driver if that user actually has that role
+    if (as_role && as_role !== targetRole) {
+      return res.status(400).json({
+        error: `User is not a ${as_role}. They are a ${targetRole}.`
+      });
+    }
+
+    // store original admin so you can "return" later if you want
+    if (!req.session.impersonator) {
+      req.session.impersonator = { ...req.session.user };
+    }
+
+    // replace session user with target
+    req.session.user = {
+      user_id: target.user_id,
+      email: target.email,
+      role: targetRole,
+      name: `${target.first_name || ""} ${target.last_name || ""}`.trim()
+    };
+
+    return res.json({ ok: true, redirect: `/${targetRole}/dashboard.html` });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
@@ -740,7 +808,7 @@ app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req,
   try {
     const pool = getPool();
     const [rows] = await pool.query(
-      "SELECT * FROM DRIVERAPPLICATIONS WHERE application_status = 'pending' ORDER BY submitted_at DESC LIMIT 50"
+      "SELECT * FROM DRIVERAPPLICATIONS WHERE application_status = 'PENDING' ORDER BY application_date DESC LIMIT 50"
     );
     res.json({ ok: true, applications: rows });
   } catch (e) {
@@ -753,6 +821,48 @@ app.get("/api/admin/stats", requireRole("admin"), async (req, res) => {
     const pool = getPool();
     const [[u]] = await pool.query("SELECT COUNT(*) AS users FROM USERS");
     res.json({ ok: true, users: Number(u.users) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Admin: list users (supports ?q= search)
+app.get("/api/admin/users", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const q = String(req.query.q || "").trim();
+
+    // NOTE: These columns exist in your current app code (profile page + registration).
+    // If your DB schema differs, update this SELECT to match.
+    const sql = `
+      SELECT
+        u.user_id,
+        u.username,
+        u.email,
+        u.first_name,
+        u.last_name,
+        u.status,
+        CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END AS is_admin,
+        CASE WHEN su.user_id IS NULL THEN 0 ELSE 1 END AS is_sponsor,
+        CASE WHEN d.user_id IS NULL THEN 0 ELSE 1 END AS is_driver
+      FROM USERS u
+      LEFT JOIN ADMIN a ON a.user_id = u.user_id
+      LEFT JOIN SPONSORUSERS su ON su.user_id = u.user_id
+      LEFT JOIN DRIVERS d ON d.user_id = u.user_id
+      WHERE (
+        ? = ''
+        OR u.email LIKE CONCAT('%', ?, '%')
+        OR u.username LIKE CONCAT('%', ?, '%')
+        OR u.first_name LIKE CONCAT('%', ?, '%')
+        OR u.last_name LIKE CONCAT('%', ?, '%')
+        OR CONCAT(IFNULL(u.first_name,''),' ',IFNULL(u.last_name,'')) LIKE CONCAT('%', ?, '%')
+      )
+      ORDER BY u.user_id DESC
+      LIMIT 250;
+    `;
+
+    const [rows] = await pool.query(sql, [q, q, q, q, q, q]);
+    res.json({ ok: true, users: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
