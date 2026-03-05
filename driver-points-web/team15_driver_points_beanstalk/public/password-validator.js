@@ -17,34 +17,47 @@ const PASSWORD_RULES = {
  * @param {string} password - The password to validate
  * @returns {object} - { isValid: boolean, errors: string[] }
  */
-function validatePassword(password) {
+function validatePassword(newPassword, currentPassword = null) {
   const errors = [];
 
   // Check minimum length
-  if (!password || password.length < PASSWORD_RULES.minLength) {
+  if (!newPassword || newPassword.length < PASSWORD_RULES.minLength) {
     errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
   }
 
   // Check for uppercase
-  if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password)) {
+  if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(newPassword)) {
     errors.push('Password must contain at least 1 uppercase letter (A-Z)');
   }
 
   // Check for lowercase
-  if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password)) {
+  if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(newPassword)) {
     errors.push('Password must contain at least 1 lowercase letter (a-z)');
   }
 
   // Check for numbers
-  if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(password)) {
+  if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(newPassword)) {
     errors.push('Password must contain at least 1 number (0-9)');
   }
 
   // Check for special characters
   if (PASSWORD_RULES.requireSpecialChar) {
-    const hasSpecialChar = PASSWORD_RULES.specialChars.split('').some(char => password.includes(char));
+    const hasSpecialChar = PASSWORD_RULES.specialChars.split('').some(char => newPassword.includes(char));
     if (!hasSpecialChar) {
       errors.push(`Password must contain at least 1 special character (${PASSWORD_RULES.specialChars})`);
+    }
+  }
+
+  // check if new password contains sequences same characters from current password
+  if (currentPassword != null) {
+    stringLength = (currentPassword.length / 2) + 2;
+    for (let i = 0; i <= currentPassword.length - stringLength; i++) {
+      for (let len = stringLength; len <= currentPassword.length - i; len++) {
+        const substring = currentPassword.slice(i, i + len);
+        if (newPassword.includes(substring)) {
+          errors.push('Password must not contain sequences of characters from your old password');
+        }
+      }
     }
   }
 
