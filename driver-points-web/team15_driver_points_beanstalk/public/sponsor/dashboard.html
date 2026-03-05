@@ -35,13 +35,52 @@
 
     <div class="card" style="margin-top:18px">
       <h3 style="margin:0 0 6px">Pending Applications</h3>
-      <table class="table" id="appTable">
+      <table class="table" id="pendingApplicationsTable">
         <thead>
-          <tr><th>Submitted</th><th>Driver</th><th>Status</th></tr>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Application Date</th>
+            <th>Actions</th>
+          </tr>
         </thead>
-        <tbody></tbody>
+        <tbody id="applicationsBody">
+        </tbody>
       </table>
       <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">Create New Driver</h3>
+      <p class="sub">Create a new driver account for your organization.</p>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="driverEmail">Email *</label>
+          <input id="driverEmail" type="email" placeholder="testdriver#@test.com" />
+        </div>
+        <div>
+          <label for="driverFirstName">First Name *</label>
+          <input id="driverFirstName" type="text" placeholder="John" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="driverLastName">Last Name *</label>
+          <input id="driverLastName" type="text" placeholder="Doe" />
+        </div>
+        <div>
+          <label for="driverPhone">Phone *</label>
+          <input id="driverPhone" type="tel" placeholder="555-123-4567" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <button class="btn" id="createDriverBtn">Create Driver</button>
+      </div>
+
+      <div class="msg" id="createDriverMsg"></div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -66,11 +105,75 @@
   <script>
     const welcome = Team15.qs("#welcome");
     const conversionEl = Team15.qs("#conversionRate");
-    const tbody = Team15.qs("#appTable tbody");
-    const msg = Team15.qs("#msg");
     const promoInput = Team15.qs("#promo");
     const promoMsg = Team15.qs("#promoMsg");
+    const createDriverEmail = Team15.qs("#driverEmail");
+    const createDriverFirstName = Team15.qs("#driverFirstName");
+    const createDriverLastName = Team15.qs("#driverLastName");
+    const createDriverPhone = Team15.qs("#driverPhone");
+    const createDriverMsg = Team15.qs("#createDriverMsg");
+    const msg = Team15.qs("#msg");
 
+    async function loadPendingApplications() {
+      try {
+        const response = await Team15.api("/api/sponsor/pending-applications", { method: "GET" });
+        const tbody = document.getElementById("applicationsBody");
+        tbody.innerHTML = "";
+
+        response.applications.forEach(app => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${app.first_name || ""} ${app.last_name || ""}</td>
+            <td>${app.email || ""}</td>
+            <td>${new Date(app.application_date).toLocaleDateString()}</td>
+            <td>
+              <button onclick="approveApplication(${app.application_id})" class="btn btn-success" style="margin-right: 8px;">Approve</button>
+              <button onclick="rejectApplication(${app.application_id})" class="btn btn-danger">Reject</button>
+            </td>
+          `;
+          tbody.appendChild(row);
+        });
+      } catch (e) {
+        console.error("Error loading applications:", e);
+        msg.textContent = e.message;
+      }
+    }
+
+async function approveApplication(applicationId) {
+  if (!confirm("Are you sure you want to approve this application?")) return;
+
+  try {
+    await Team15.api("/api/sponsor/approve-application", {
+      method: "PUT",
+      body: JSON.stringify({
+        application_id: applicationId
+      })
+    });
+    alert("Application approved successfully");
+    loadPendingApplications();
+  } catch (e) {
+    alert("Error: " + e.message);
+  }
+}
+
+async function rejectApplication(applicationId) {
+  const reason = prompt("Enter rejection reason:");
+  if (!reason) return;
+
+  try {
+    await Team15.api("/api/sponsor/reject-application", {
+      method: "PUT",
+      body: JSON.stringify({
+        application_id: applicationId,
+        rejection_reason: reason
+      })
+    });
+    alert("Application rejected successfully");
+    loadPendingApplications();
+  } catch (e) {
+    alert("Error: " + e.message);
+  }
+}
     async function init() {
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
@@ -90,24 +193,74 @@
         msg.textContent = e.message;
       }
 
-      try {
-        const data = await Team15.api("/api/sponsor/pending-applications", { method: "GET" });
-        const apps = data.applications || [];
-        tbody.innerHTML = apps.map(a => {
-          const submitted = a.submitted_at || a.created_at || "";
-          const driver = a.user_id || a.driver_id || "";
-          const status = a.application_status || "";
-          return `<tr><td>${submitted}</td><td>${driver}</td><td>${status}</td></tr>`;
-        }).join("");
-      } catch (e) {
-        msg.textContent = e.message;
-      }
+      loadPendingApplications();
     }
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
       await Team15.api("/api/logout", { method: "POST" });
       window.location.href = "/";
     });
+
+Team15.qs("#createDriverBtn").addEventListener("click", async () => {
+  createDriverMsg.textContent = "";
+
+  // Validate inputs
+  const email = createDriverEmail.value.trim();
+  const firstName = createDriverFirstName.value.trim();
+  const lastName = createDriverLastName.value.trim();
+  const phone = createDriverPhone.value.trim();
+
+  if (!email) {
+    createDriverMsg.style.color = "var(--danger)";
+    createDriverMsg.textContent = "Email is required";
+    return;
+  }
+
+  if (!firstName) {
+    createDriverMsg.style.color = "var(--danger)";
+    createDriverMsg.textContent = "First name is required";
+    return;
+  }
+
+  if (!lastName) {
+    createDriverMsg.style.color = "var(--danger)";
+    createDriverMsg.textContent = "Last name is required";
+    return;
+  }
+
+  if (!phone) {
+    createDriverMsg.style.color = "var(--danger)";
+    createDriverMsg.textContent = "Phone number is required";
+    return;
+  }
+
+  try {
+    const response = await Team15.api("/api/sponsor/create-driver", {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        phone
+      })
+    });
+
+    createDriverMsg.style.color = "#b8c3e6";
+    createDriverMsg.textContent = `Driver ${firstName} ${lastName} created successfully! Temporary password: ${response.temp_password}`;
+    
+    // Clear form
+    createDriverEmail.value = "";
+    createDriverFirstName.value = "";
+    createDriverLastName.value = "";
+    createDriverPhone.value = "";
+
+    // Reload applications list
+    loadPendingApplications();
+  } catch (e) {
+    createDriverMsg.style.color = "var(--danger)";
+    createDriverMsg.textContent = e.message;
+  }
+});
 
     Team15.qs("#promoBtn").addEventListener("click", async () => {
       promoMsg.textContent = "";
