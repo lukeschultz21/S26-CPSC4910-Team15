@@ -1,0 +1,24 @@
+# Environment variables - NEVER COMMIT THESE
+.env
+.env.local
+.env.*.local
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.sql
+dump.sql

@@ -36,6 +36,7 @@
             <th>Status</th>
             <th>Current Points</th>
             <th>Updated</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -55,13 +56,24 @@
       return d.toLocaleString();
     }
 
-    async function init() {
-      const me = await Team15.loadMe();
-      if (!me) return window.location.href = "/login.html";
-      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+    async function dropDriver(driverUserId, driverName) {
+      if (!confirm(`Are you sure you want to drop ${driverName}? This will deactivate their driver account.`)) return;
 
-      subtitle.textContent = `Signed in as ${me.email}`;
+      try {
+        await Team15.api("/api/sponsor/drop-driver", {
+          method: "PUT",
+          body: JSON.stringify({
+            driver_user_id: driverUserId
+          })
+        });
+        alert(`${driverName} has been dropped successfully`);
+        loadDriverBalances(); // Reload the list
+      } catch (e) {
+        alert("Error: " + e.message);
+      }
+    }
 
+    async function loadDriverBalances() {
       try {
         const data = await Team15.api("/api/sponsor/driver-balances", { method: "GET" });
         const drivers = data.drivers || [];
@@ -83,12 +95,25 @@
               <td>${d.driver_status || ""}</td>
               <td>${Number(d.current_points)}</td>
               <td>${fmtDate(d.balance_updated_at)}</td>
+              <td>
+                <button onclick="dropDriver(${d.driver_user_id}, '${name}')" class="btn btn-danger" style="font-size: 12px; padding: 4px 8px;">Drop</button>
+              </td>
             </tr>
           `;
         }).join("");
       } catch (e) {
         msg.textContent = e.message;
       }
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+
+      subtitle.textContent = `Signed in as ${me.email}`;
+
+      loadDriverBalances();
     }
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {

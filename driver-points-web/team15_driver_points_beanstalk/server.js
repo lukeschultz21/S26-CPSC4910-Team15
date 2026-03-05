@@ -529,11 +529,13 @@ app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const userId = req.session.user.user_id;
 
-    const [rows] = await pool.query("SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? LIMIT 1", [
-      userId
-    ]);
+    // Calculate current balance from all transactions (positive + negative)
+    const [rows] = await pool.query(
+      "SELECT SUM(point_change) AS current_points FROM POINTTRANSACTIONS WHERE user_id = ?",
+      [userId]
+    );
 
-    res.json({ ok: true, current_points: rows.length ? Number(rows[0].current_points) : 0 });
+    res.json({ ok: true, current_points: (rows.length && rows[0].current_points) ? Number(rows[0].current_points) : 0 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -804,13 +806,288 @@ app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) =
   }
 });
 
+app.post("/api/sponsor/create-driver", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const sponsorUserId = req.session.user.user_id;
+    const { email, first_name, last_name, phone } = req.body;
+
+    // Validate required fields
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    if (!first_name || !first_name.trim()) {
+      return res.status(400).json({ error: "First name is required" });
+    }
+    if (!last_name || !last_name.trim()) {
+      return res.status(400).json({ error: "Last name is required" });
+    }
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ error: "Phone number is required" });
+    }
+
+    // Get sponsor's org_id
+    const [orgRows] = await pool.query(
+      "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+      [sponsorUserId]
+    );
+
+    if (!orgRows.length) {
+      return res.status(404).json({ error: "Sponsor organization not found" });
+    }
+
+    const orgId = orgRows[0].org_id;
+
+    // Check if email already exists
+    const [existingUser] = await pool.query(
+      "SELECT user_id FROM USERS WHERE email = ? LIMIT 1",
+      [email.trim()]
+    );
+
+    if (existingUser.length) {
+      return res.status(409).json({ error: "Email already exists" });
+    }
+
+    // Create a temporary password
+    const tempPassword = Math.random().toString(36).slice(-8);
+    const hash = await bcrypt.hash(tempPassword, 10);
+
+    // Create user
+    const [userResult] = await pool.query(
+      `INSERT INTO USERS 
+       (email, password_hash, first_name, last_name, phone, username, status, notifications_enabled, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, 'active', 1, NOW())`,
+      [
+        email.trim(),
+        hash,
+        first_name.trim(),
+        last_name.trim(),
+        phone.trim(),
+        email.trim().split("@")[0] // Use email prefix as username
+      ]
+    );
+
+    const userId = userResult.insertId;
+
+    // Create driver record
+    await pool.query(
+      `INSERT INTO DRIVERS 
+       (user_id, org_id, phone, driver_status) 
+       VALUES (?, ?, ?, 'active')`,
+      [userId, orgId, phone.trim()]
+    );
+
+    // Initialize point balance
+    await pool.query(
+      "INSERT INTO DRIVERPOINTBALANCES (user_id, current_points) VALUES (?, 0)",
+      [userId]
+    );
+
+    res.json({ 
+      ok: true, 
+      message: "Driver created successfully",
+      user_id: userId,
+      temp_password: tempPassword,
+      email: email.trim()
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/sponsor/drop-driver", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const { driver_user_id } = req.body;
+
+    if (!driver_user_id) {
+      return res.status(400).json({ error: "driver_user_id is required" });
+    }
+
+    // Get sponsor's org_id
+    const [orgRows] = await pool.query(
+      "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+      [actorUserId]
+    );
+
+    if (!orgRows.length) {
+      return res.status(404).json({ error: "Sponsor organization not found" });
+    }
+
+    const sponsorOrgId = orgRows[0].org_id;
+
+    // Get driver record
+    const [driverRows] = await pool.query(
+      "SELECT * FROM DRIVERS WHERE user_id = ? LIMIT 1",
+      [driver_user_id]
+    );
+
+    if (!driverRows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+
+    const driver = driverRows[0];
+
+    // Verify driver belongs to sponsor's organization
+    if (driver.org_id !== sponsorOrgId) {
+      return res.status(403).json({ error: "You can only drop drivers from your own organization" });
+    }
+
+    // Get organization name
+    const [orgNameRows] = await pool.query(
+      "SELECT org_name FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [sponsorOrgId]
+    );
+
+    const orgName = orgNameRows.length ? orgNameRows[0].org_name : "Unknown Organization";
+
+    // Update driver status to inactive
+    await pool.query(
+      "UPDATE DRIVERS SET driver_status = 'inactive' WHERE user_id = ?",
+      [driver_user_id]
+    );
+
+    // Clear org affiliation
+    await pool.query(
+      "UPDATE DRIVERS SET org_id = NULL WHERE user_id = ?",
+      [driver_user_id]
+    );
+
+    // Audit log the drop event
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["DROP_DRIVER", "DRIVER", driver_user_id, actorUserId, JSON.stringify({ org_id: sponsorOrgId })]
+    );
+
+    // Send notification to dropped driver with org name
+    await pool.query(
+      "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+      [driver_user_id, "DRIVER_DROPPED", `You have been dropped from the sponsor organization ${orgName}`, "DRIVER", driver_user_id]
+    );
+
+    res.json({ ok: true, message: "Driver dropped successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.query(
-      "SELECT * FROM DRIVERAPPLICATIONS WHERE application_status = 'PENDING' ORDER BY application_date DESC LIMIT 50"
+      `SELECT 
+        da.application_id,
+        da.user_id,
+        da.org_id,
+        da.application_status,
+        da.application_date,
+        u.email,
+        u.first_name,
+        u.last_name
+       FROM DRIVERAPPLICATIONS da
+       JOIN USERS u ON u.user_id = da.user_id
+       WHERE da.application_status = 'PENDING'
+       ORDER BY da.application_date DESC
+       LIMIT 50`
     );
     res.json({ ok: true, applications: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/sponsor/reject-application", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const { application_id, rejection_reason } = req.body;
+
+    if (!application_id) {
+      return res.status(400).json({ error: "application_id is required" });
+    }
+
+    if (!rejection_reason || rejection_reason.trim() === "") {
+      return res.status(400).json({ error: "rejection_reason is required" });
+    }
+
+    // Get the application
+    const [appRows] = await pool.query(
+      "SELECT * FROM DRIVERAPPLICATIONS WHERE application_id = ? LIMIT 1",
+      [application_id]
+    );
+
+    if (!appRows.length) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    const application = appRows[0];
+
+    // Update application status to REJECTED
+    await pool.query(
+      "UPDATE DRIVERAPPLICATIONS SET application_status = 'REJECTED' WHERE application_id = ?",
+      [application_id]
+    );
+
+    // Audit log the rejection
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["REJECT_APPLICATION", "DRIVERAPPLICATION", application_id, actorUserId, JSON.stringify({ rejection_reason })]
+    );
+
+    // Send notification to applicant
+    await pool.query(
+      "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+      [application.user_id, "APPLICATION_REJECTED", `Your driver application has been rejected. Reason: ${rejection_reason}`, "DRIVERAPPLICATION", application_id]
+    );
+
+    res.json({ ok: true, message: "Application rejected successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const { application_id } = req.body;
+
+    if (!application_id) {
+      return res.status(400).json({ error: "application_id is required" });
+    }
+
+    // Get the application
+    const [appRows] = await pool.query(
+      "SELECT * FROM DRIVERAPPLICATIONS WHERE application_id = ? LIMIT 1",
+      [application_id]
+    );
+
+    if (!appRows.length) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    const application = appRows[0];
+
+    // Update application status to APPROVED
+    await pool.query(
+      "UPDATE DRIVERAPPLICATIONS SET application_status = 'APPROVED' WHERE application_id = ?",
+      [application_id]
+    );
+
+    // Audit log the approval
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["APPROVE_APPLICATION", "DRIVERAPPLICATION", application_id, actorUserId, JSON.stringify({})]
+    );
+
+    // Send notification to applicant
+    await pool.query(
+      "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+      [application.user_id, "APPLICATION_APPROVED", "Your driver application has been approved!", "DRIVERAPPLICATION", application_id]
+    );
+
+    res.json({ ok: true, message: "Application approved successfully" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
