@@ -114,3 +114,7 @@ async function mountImpersonationBanner() {
 }
 
 window.Team15.mountImpersonationBanner = mountImpersonationBanner;
+
+document.addEventListener("DOMContentLoaded", () => {
+  mountImpersonationBanner().catch(() => {});
+});

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Driver Catalog</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .layout { display:grid; grid-template-columns: 2fr 1fr; gap:18px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
+    .product-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03); }
+    .product-card img { width:100%; height:180px; object-fit:cover; background:#fff; }
+    .product-body { padding:14px; display:grid; gap:10px; }
+    .product-title { font-weight:700; min-height:48px; }
+    .meta { color:var(--muted); font-size:13px; }
+    .cart-row { display:grid; gap:8px; padding:12px 0; border-bottom:1px solid rgba(255,255,255,.08); }
+    .pill-status { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:#1f2937; }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/dashboard" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
+        <span class="pill">Driver Catalog</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/driver/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/driver/notifications.html">Notifications</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Browse Your Sponsor Catalog</h2>
+      <div class="small" id="welcome"></div>
+      <p class="sub" style="margin-top:12px">These products come from your sponsor's eBay-backed catalog. Price and availability are rechecked when you add an item to the cart.</p>
+    </div>
+
+    <div class="layout" style="margin-top:18px">
+      <div class="card">
+        <h3 style="margin:0 0 10px">Available Products</h3>
+        <div class="msg" id="catalogMsg"></div>
+        <div class="grid" id="catalogGrid"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 10px">Shopping Cart</h3>
+        <div class="msg" id="cartMsg"></div>
+        <div id="cartList"></div>
+        <div style="margin-top:12px"><strong>Total:</strong> <span id="cartTotal">0 pts</span></div>
+        <button class="btn" id="checkoutBtn" style="margin-top:12px; width:100%">Checkout</button>
+        <div style="margin-top:18px">
+          <h4 style="margin:0 0 8px">Recent Purchases</h4>
+          <div id="purchaseList" class="small"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const welcome = Team15.qs('#welcome');
+    const catalogGrid = Team15.qs('#catalogGrid');
+    const catalogMsg = Team15.qs('#catalogMsg');
+    const cartList = Team15.qs('#cartList');
+    const cartMsg = Team15.qs('#cartMsg');
+    const cartTotal = Team15.qs('#cartTotal');
+    const purchaseList = Team15.qs('#purchaseList');
+
+    function productCard(item) {
+      return `
+        <div class="product-card">
+          <img src="${item.image_url || '/images/car-logo.png'}" alt="${item.title || 'Product'}" />
+          <div class="product-body">
+            <div class="product-title">${item.title || 'Untitled Product'}</div>
+            <div class="meta">${item.description || ''}</div>
+            <div><span class="pill-status">${item.availability_status || 'Unknown Availability'}</span></div>
+            <div><strong>$${Number(item.price_value || 0).toFixed(2)}</strong> · <strong>${Number(item.points_cost || 0).toLocaleString()} pts</strong></div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <a class="btn ghost" href="${item.item_web_url || '#'}" target="_blank" rel="noopener">Open eBay</a>
+              <button class="btn" onclick="addToCart('${item.item_id}')">Add to Cart</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCart(items) {
+      const total = items.reduce((sum, item) => sum + (Number(item.points_cost || 0) * Number(item.quantity || 0)), 0);
+      cartTotal.textContent = `${total.toLocaleString()} pts`;
+      if (!items.length) {
+        cartList.innerHTML = '<div class="small">Your cart is empty.</div>';
+        return;
+      }
+      cartList.innerHTML = items.map(item => `
+        <div class="cart-row">
+          <div><strong>${item.title}</strong></div>
+          <div>${Number(item.points_cost || 0).toLocaleString()} pts each · Qty ${item.quantity}</div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input type="number" min="1" value="${item.quantity}" style="width:90px" onchange="updateQty('${item.item_id}', this.value)" />
+            <button class="btn ghost" onclick="removeFromCart('${item.item_id}')">Remove</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function loadCatalog() {
+      catalogMsg.textContent = 'Loading sponsor catalog...';
+      try {
+        const data = await Team15.api('/api/driver/catalog');
+        const items = data.items || [];
+        catalogGrid.innerHTML = items.length ? items.map(productCard).join('') : '<div class="small">Your sponsor has not added any products yet.</div>';
+        catalogMsg.textContent = '';
+      } catch (e) {
+        catalogMsg.textContent = e.message;
+      }
+    }
+
+    async function loadCart() {
+      try {
+        const data = await Team15.api('/api/driver/cart');
+        renderCart(data.items || []);
+      } catch (e) {
+        cartMsg.textContent = e.message;
+      }
+    }
+
+    async function loadPurchases() {
+      try {
+        const data = await Team15.api('/api/driver/purchases');
+        const purchases = data.purchases || [];
+        purchaseList.innerHTML = purchases.length
+          ? purchases.map(p => `Purchase #${p.purchase_id} · ${p.purchase_status} · ${new Date(p.created_at).toLocaleString()}`).join('<br>')
+          : 'No purchases yet.';
+      } catch (e) {
+        purchaseList.textContent = e.message;
+      }
+    }
+
+    async function addToCart(itemId) {
+      try {
+        const data = await Team15.api('/api/driver/cart/items', {
+          method: 'POST',
+          body: JSON.stringify({ item_id: itemId, quantity: 1 })
+        });
+        renderCart(data.items || []);
+        cartMsg.textContent = 'Item added after live price/availability check.';
+      } catch (e) {
+        cartMsg.textContent = e.message;
+      }
+    }
+
+    async function updateQty(itemId, qty) {
+      try {
+        const data = await Team15.api(`/api/driver/cart/items/${itemId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ quantity: Number(qty) || 1 })
+        });
+        renderCart(data.items || []);
+      } catch (e) {
+        cartMsg.textContent = e.message;
+      }
+    }
+
+    async function removeFromCart(itemId) {
+      try {
+        const data = await Team15.api(`/api/driver/cart/items/${itemId}`, { method: 'DELETE' });
+        renderCart(data.items || []);
+      } catch (e) {
+        cartMsg.textContent = e.message;
+      }
+    }
+
+    async function checkout() {
+      cartMsg.textContent = 'Submitting purchase...';
+      try {
+        const data = await Team15.api('/api/driver/cart/checkout', { method: 'POST' });
+        cartMsg.textContent = `Purchase completed. Order #${data.purchase_id} used ${Number(data.total_points || 0).toLocaleString()} points.`;
+        await loadCart();
+        await loadPurchases();
+      } catch (e) {
+        cartMsg.textContent = e.message;
+      }
+    }
+
+    window.addToCart = addToCart;
+    window.updateQty = updateQty;
+    window.removeFromCart = removeFromCart;
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = '/login.html';
+      if (me.role !== 'driver') return window.location.href = `/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      welcome.textContent = `Signed in as ${me.email}`;
+      await loadCatalog();
+      await loadCart();
+      await loadPurchases();
+    }
+
+    Team15.qs('#checkoutBtn').addEventListener('click', checkout);
+    Team15.qs('#logoutBtn').addEventListener('click', async () => {
+      await Team15.api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    init();
+  </script>
+</body>
+</html>

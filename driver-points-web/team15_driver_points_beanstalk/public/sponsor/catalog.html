@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sponsor Catalog</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+    .product-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; overflow:hidden; background:rgba(255,255,255,.03); }
+    .product-card img { width:100%; height:180px; object-fit:cover; background:#fff; }
+    .product-body { padding:14px; display:grid; gap:10px; }
+    .product-title { font-weight:700; min-height:48px; }
+    .meta { color:var(--muted); font-size:13px; }
+    .search-row { display:grid; grid-template-columns: 1fr auto; gap:10px; }
+    .pill-status { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:#1f2937; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/dashboard" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
+        <span class="pill">Sponsor Catalog</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/sponsor/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/sponsor/driver-balances.html">Driver Balances</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Build Your Sponsor Catalog</h2>
+      <div class="small" id="welcome"></div>
+      <p class="sub" style="margin-top:12px">Search eBay, review live product details, and add products into your sponsor-specific catalog.</p>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 10px">Search eBay</h3>
+      <div class="search-row">
+        <input id="searchInput" placeholder="Search for incentive products (example: bluetooth speaker, backpack, headphones)" />
+        <button class="btn" id="searchBtn">Search</button>
+      </div>
+      <div class="msg" id="searchMsg"></div>
+      <div class="grid" id="searchResults" style="margin-top:16px"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 10px">Current Sponsor Catalog</h3>
+      <div class="small">These are the items drivers will browse and redeem with points.</div>
+      <div class="msg" id="catalogMsg"></div>
+      <div class="grid" id="catalogGrid" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const welcome = Team15.qs('#welcome');
+    const searchInput = Team15.qs('#searchInput');
+    const searchResults = Team15.qs('#searchResults');
+    const catalogGrid = Team15.qs('#catalogGrid');
+    const searchMsg = Team15.qs('#searchMsg');
+    const catalogMsg = Team15.qs('#catalogMsg');
+
+    function card(item, actionHtml) {
+      return `
+        <div class="product-card">
+          <img src="${item.image_url || '/images/car-logo.png'}" alt="${item.title || 'Product'}" />
+          <div class="product-body">
+            <div class="product-title">${item.title || 'Untitled Product'}</div>
+            <div class="meta">${item.description || ''}</div>
+            <div><span class="pill-status">${item.availability_status || 'Unknown Availability'}</span></div>
+            <div><strong>$${Number(item.price_value || 0).toFixed(2)}</strong> · <strong>${Number(item.points_cost || 0).toLocaleString()} pts</strong></div>
+            <div class="actions">${actionHtml}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function loadCatalog() {
+      catalogMsg.textContent = 'Loading catalog...';
+      try {
+        const data = await Team15.api('/api/sponsor/catalog/items');
+        const items = data.items || [];
+        if (!items.length) {
+          catalogGrid.innerHTML = '<div class="small">No items in the sponsor catalog yet.</div>';
+        } else {
+          catalogGrid.innerHTML = items.map(item => card(item, `
+            <a class="btn ghost" href="${item.item_web_url || '#'}" target="_blank" rel="noopener">Open eBay</a>
+            <button class="btn" onclick="removeCatalogItem(${item.catalog_item_id})">Remove</button>
+          `)).join('');
+        }
+        catalogMsg.textContent = '';
+      } catch (e) {
+        catalogMsg.textContent = e.message;
+      }
+    }
+
+    async function runSearch() {
+      const q = searchInput.value.trim();
+      if (!q) {
+        searchMsg.textContent = 'Enter a search phrase first.';
+        return;
+      }
+      searchMsg.textContent = 'Searching eBay...';
+      try {
+        const data = await Team15.api(`/api/catalog/search?q=${encodeURIComponent(q)}&limit=12`);
+        const items = data.items || [];
+        searchResults.innerHTML = items.map(item => card(item, `
+          <a class="btn ghost" href="${item.item_web_url || '#'}" target="_blank" rel="noopener">Open eBay</a>
+          <button class="btn" onclick="addCatalogItem('${item.item_id}')">Add to Catalog</button>
+        `)).join('');
+        searchMsg.textContent = items.length ? `Showing ${items.length} live results from eBay ${data.environment}.` : 'No results found.';
+      } catch (e) {
+        searchMsg.textContent = e.message;
+      }
+    }
+
+    async function addCatalogItem(itemId) {
+      try {
+        await Team15.api('/api/sponsor/catalog/items', {
+          method: 'POST',
+          body: JSON.stringify({ item_id: itemId })
+        });
+        await loadCatalog();
+        searchMsg.textContent = 'Item added to sponsor catalog.';
+      } catch (e) {
+        searchMsg.textContent = e.message;
+      }
+    }
+
+    async function removeCatalogItem(catalogItemId) {
+      try {
+        await Team15.api(`/api/sponsor/catalog/items/${catalogItemId}`, { method: 'DELETE' });
+        await loadCatalog();
+      } catch (e) {
+        catalogMsg.textContent = e.message;
+      }
+    }
+    window.addCatalogItem = addCatalogItem;
+    window.removeCatalogItem = removeCatalogItem;
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = '/login.html';
+      if (me.role !== 'sponsor') return window.location.href = `/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      welcome.textContent = `Signed in as ${me.email}`;
+      await loadCatalog();
+    }
+
+    Team15.qs('#searchBtn').addEventListener('click', runSearch);
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+    Team15.qs('#logoutBtn').addEventListener('click', async () => {
+      await Team15.api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    init();
+  </script>
+</body>
+</html>

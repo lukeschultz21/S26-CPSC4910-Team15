@@ -472,3 +472,13 @@ input::placeholder{
   padding:6px 10px 10px;
 }
 .dropdown.open .dropdownMenu{display:block}
+
+#impersonationBanner{
+  background:#3a0d0d !important;
+  color:#fff;
+  border-bottom:1px solid rgba(255,255,255,.16);
+}
+
+#impersonationBanner .btn{
+  border-color:rgba(255,255,255,.25);
+}
