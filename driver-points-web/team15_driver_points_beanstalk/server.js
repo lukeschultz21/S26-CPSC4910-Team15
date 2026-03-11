@@ -5,6 +5,7 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
 const multer = require("multer");
 const { getPool } = require("./db");
 
@@ -84,6 +85,235 @@ async function getSponsorOrgId(pool, sponsorUserId) {
   return rows.length ? Number(rows[0].org_id) : null;
 }
 
+
+// -----------------------------
+// eBay catalog helpers
+// -----------------------------
+const EBAY_ENV = String(process.env.EBAY_ENV || "sandbox").toLowerCase() === "production" ? "production" : "sandbox";
+const EBAY_API_HOST = EBAY_ENV === "production" ? "api.ebay.com" : "api.sandbox.ebay.com";
+const EBAY_SCOPE = process.env.EBAY_SCOPE || "https://api.ebay.com/oauth/api_scope";
+let ebayTokenCache = { accessToken: null, expiresAt: 0 };
+
+function hasEbayConfig() {
+  return !!(process.env.EBAY_CLIENT_ID && process.env.EBAY_CLIENT_SECRET);
+}
+
+function httpsRequestJson({ method = "GET", hostname, path: requestPath, headers = {}, body = null }) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({ method, hostname, path: requestPath, headers }, (res) => {
+      let raw = "";
+      res.on("data", (chunk) => { raw += chunk; });
+      res.on("end", () => {
+        let parsed = {};
+        try {
+          parsed = raw ? JSON.parse(raw) : {};
+        } catch (_) {
+          parsed = { raw };
+        }
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          return resolve(parsed);
+        }
+        const err = new Error(parsed.message || parsed.error_description || `eBay request failed (${res.statusCode})`);
+        err.statusCode = res.statusCode;
+        err.payload = parsed;
+        reject(err);
+      });
+    });
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+async function getEbayAccessToken() {
+  if (!hasEbayConfig()) {
+    throw new Error("Missing eBay configuration. Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET in your environment.");
+  }
+
+  const now = Date.now();
+  if (ebayTokenCache.accessToken && now < ebayTokenCache.expiresAt - 60000) {
+    return ebayTokenCache.accessToken;
+  }
+
+  const basic = Buffer.from(`${process.env.EBAY_CLIENT_ID}:${process.env.EBAY_CLIENT_SECRET}`).toString("base64");
+  const body = `grant_type=client_credentials&scope=${encodeURIComponent(EBAY_SCOPE)}`;
+
+  const tokenData = await httpsRequestJson({
+    method: "POST",
+    hostname: EBAY_API_HOST,
+    path: "/identity/v1/oauth2/token",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Length": Buffer.byteLength(body)
+    },
+    body
+  });
+
+  ebayTokenCache = {
+    accessToken: tokenData.access_token,
+    expiresAt: now + (Number(tokenData.expires_in) || 7200) * 1000
+  };
+
+  return ebayTokenCache.accessToken;
+}
+
+async function ebayApiGet(requestPath) {
+  const token = await getEbayAccessToken();
+  return httpsRequestJson({
+    method: "GET",
+    hostname: EBAY_API_HOST,
+    path: requestPath,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      "X-EBAY-C-MARKETPLACE-ID": process.env.EBAY_MARKETPLACE_ID || "EBAY_US"
+    }
+  });
+}
+
+function normalizeEbayItem(raw, centsPerPoint = 1) {
+  const currentPrice = Number(raw?.price?.value || raw?.currentBidPrice?.value || raw?.estimatedAvailabilities?.[0]?.price?.value || 0);
+  const currency = raw?.price?.currency || raw?.currentBidPrice?.currency || "USD";
+  const availabilityStatus = raw?.availabilityStatus || raw?.estimatedAvailabilities?.[0]?.availabilityStatus || raw?.estimatedAvailabilities?.[0]?.estimatedAvailabilityStatus || "UNKNOWN";
+  const imageUrl = raw?.image?.imageUrl || raw?.thumbnailImages?.[0]?.imageUrl || raw?.additionalImages?.[0]?.imageUrl || null;
+  const title = raw?.title || raw?.shortDescription || "Untitled Item";
+  const itemId = raw?.itemId || raw?.legacyItemId || raw?.epid || null;
+  const itemWebUrl = raw?.itemWebUrl || raw?.itemAffiliateWebUrl || null;
+  const shortDescription = raw?.shortDescription || raw?.subtitle || raw?.condition || raw?.conditionText || "";
+  const pointsCost = centsPerPoint > 0 ? Math.max(1, Math.ceil((currentPrice * 100) / centsPerPoint)) : 0;
+
+  return {
+    item_id: itemId,
+    title,
+    image_url: imageUrl,
+    item_web_url: itemWebUrl,
+    description: shortDescription,
+    condition: raw?.condition || raw?.conditionText || null,
+    availability_status: availabilityStatus,
+    price_value: currentPrice,
+    currency,
+    points_cost: pointsCost,
+    raw
+  };
+}
+
+async function ensureCatalogTables(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS SPONSORCATALOGITEMS (
+      catalog_item_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      org_id BIGINT UNSIGNED NOT NULL,
+      ebay_item_id VARCHAR(255) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      image_url TEXT NULL,
+      item_web_url TEXT NULL,
+      description TEXT NULL,
+      condition_text VARCHAR(100) NULL,
+      availability_status VARCHAR(100) NULL,
+      price_value DECIMAL(10,2) NOT NULL DEFAULT 0,
+      currency VARCHAR(12) NOT NULL DEFAULT 'USD',
+      last_synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_by_user_id BIGINT UNSIGNED NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_org_ebay_item (org_id, ebay_item_id),
+      CONSTRAINT fk_catalog_org FOREIGN KEY (org_id) REFERENCES SPONSORORGANIZATION(org_id),
+      CONSTRAINT fk_catalog_creator FOREIGN KEY (created_by_user_id) REFERENCES USERS(user_id)
+    )
+  `);
+
+  const [cols] = await pool.query(`
+    SELECT COLUMN_NAME
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'SPONSORCATALOGITEMS'
+  `);
+  const existing = new Set(cols.map((c) => String(c.COLUMN_NAME).toLowerCase()));
+
+  const alterStatements = [];
+  if (!existing.has('item_web_url')) alterStatements.push("ADD COLUMN item_web_url TEXT NULL AFTER image_url");
+  if (!existing.has('description')) alterStatements.push("ADD COLUMN description TEXT NULL AFTER item_web_url");
+  if (!existing.has('condition_text')) alterStatements.push("ADD COLUMN condition_text VARCHAR(100) NULL AFTER description");
+  if (!existing.has('availability_status')) alterStatements.push("ADD COLUMN availability_status VARCHAR(100) NULL AFTER condition_text");
+  if (!existing.has('price_value')) alterStatements.push("ADD COLUMN price_value DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER availability_status");
+  if (!existing.has('currency')) alterStatements.push("ADD COLUMN currency VARCHAR(12) NOT NULL DEFAULT 'USD' AFTER price_value");
+  if (!existing.has('last_synced_at')) alterStatements.push("ADD COLUMN last_synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER currency");
+  if (!existing.has('created_by_user_id')) alterStatements.push("ADD COLUMN created_by_user_id BIGINT UNSIGNED NULL AFTER last_synced_at");
+  if (!existing.has('created_at')) alterStatements.push("ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP AFTER created_by_user_id");
+
+  for (const stmt of alterStatements) {
+    await pool.query(`ALTER TABLE SPONSORCATALOGITEMS ${stmt}`);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE SPONSORCATALOGITEMS
+      ADD UNIQUE KEY uq_org_ebay_item (org_id, ebay_item_id)
+    `);
+  } catch (_) {
+    // already exists
+  }
+}
+
+async function getOrgCentsPerPoint(pool, orgId) {
+  const [rows] = await pool.query(
+    "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+    [orgId]
+  );
+  return rows.length ? Number(rows[0].cents_per_point || 1) : 1;
+}
+
+async function getDriverOrgId(pool, userId) {
+  const [rows] = await pool.query("SELECT org_id FROM DRIVERS WHERE user_id = ? LIMIT 1", [userId]);
+  return rows.length ? Number(rows[0].org_id) : null;
+}
+
+async function refreshCatalogRows(pool, orgId, rows) {
+  const centsPerPoint = await getOrgCentsPerPoint(pool, orgId);
+  const refreshed = [];
+
+  for (const row of rows) {
+    try {
+      const raw = await ebayApiGet(`/buy/browse/v1/item/${encodeURIComponent(row.ebay_item_id)}`);
+      const normalized = normalizeEbayItem(raw, centsPerPoint);
+
+      await pool.query(
+        `UPDATE SPONSORCATALOGITEMS
+         SET title = ?, image_url = ?, item_web_url = ?, description = ?, condition_text = ?,
+             availability_status = ?, price_value = ?, currency = ?, last_synced_at = NOW()
+         WHERE catalog_item_id = ?`,
+        [
+          normalized.title,
+          normalized.image_url,
+          normalized.item_web_url,
+          normalized.description,
+          normalized.condition,
+          normalized.availability_status,
+          normalized.price_value,
+          normalized.currency,
+          row.catalog_item_id
+        ]
+      );
+
+      refreshed.push({
+        ...row,
+        ...normalized,
+        catalog_item_id: row.catalog_item_id,
+        ebay_item_id: row.ebay_item_id,
+        last_synced_at: new Date().toISOString()
+      });
+    } catch (e) {
+      refreshed.push({
+        ...row,
+        item_id: row.ebay_item_id,
+        points_cost: centsPerPoint > 0 ? Math.max(1, Math.ceil((Number(row.price_value || 0) * 100) / centsPerPoint)) : 0,
+        refresh_error: e.message
+      });
+    }
+  }
+
+  return refreshed;
+}
+
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.get("/dbcheck", async (req, res) => {
@@ -97,7 +327,20 @@ app.get("/dbcheck", async (req, res) => {
 });
 
 app.get("/api/me", (req, res) => {
-  res.json({ user: req.session.user || null });
+  if (!req.session.user) return res.json({ user: null });
+
+  const user = { ...req.session.user };
+  if (req.session.impersonator) {
+    user.impersonating = true;
+    user.impersonator = {
+      user_id: req.session.impersonator.user_id,
+      email: req.session.impersonator.email,
+      role: req.session.impersonator.role,
+      name: req.session.impersonator.name
+    };
+  }
+
+  res.json({ user });
 });
 
 // ---------------------------------
@@ -522,6 +765,16 @@ app.post("/api/admin/impersonate", requireRole("admin"), async (req, res) => {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+app.post("/api/admin/stop-impersonation", requireAuth, (req, res) => {
+  if (!req.session.impersonator) {
+    return res.status(400).json({ error: "Not currently impersonating another user" });
+  }
+
+  req.session.user = { ...req.session.impersonator };
+  delete req.session.impersonator;
+  return res.json({ ok: true, redirect: "/admin/dashboard.html" });
 });
 
 app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
@@ -1088,6 +1341,325 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
     );
 
     res.json({ ok: true, message: "Application approved successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// -----------------------------
+// eBay catalog routes
+// -----------------------------
+app.get("/api/ebay/status", requireAuth, async (req, res) => {
+  res.json({
+    ok: true,
+    configured: hasEbayConfig(),
+    environment: EBAY_ENV,
+    api_host: EBAY_API_HOST
+  });
+});
+
+app.get("/api/catalog/search", requireRole("sponsor", "admin"), async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const limit = Math.min(25, Math.max(1, Number(req.query.limit || 12)));
+    if (!q) return res.status(400).json({ error: "Search query is required" });
+
+    const pool = getPool();
+    let orgId = null;
+    if (req.session.user.role === "sponsor") {
+      orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    } else if (req.query.org_id) {
+      orgId = Number(req.query.org_id);
+    }
+    const centsPerPoint = orgId ? await getOrgCentsPerPoint(pool, orgId) : 1;
+
+    const searchPath = `/buy/browse/v1/item_summary/search?q=${encodeURIComponent(q)}&limit=${limit}`;
+    const data = await ebayApiGet(searchPath);
+    const items = (data.itemSummaries || []).map((item) => normalizeEbayItem(item, centsPerPoint));
+    res.json({ ok: true, environment: EBAY_ENV, items, total: Number(data.total || items.length) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/catalog/items", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureCatalogTables(pool);
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
+
+    const [rows] = await pool.query(
+      `SELECT catalog_item_id, org_id, ebay_item_id, title, image_url, item_web_url, description,
+              condition_text, availability_status, price_value, currency, last_synced_at, created_at
+       FROM SPONSORCATALOGITEMS
+       WHERE org_id = ?
+       ORDER BY created_at DESC`,
+      [orgId]
+    );
+
+    const items = await refreshCatalogRows(pool, orgId, rows);
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/sponsor/catalog/items", requireRole("sponsor"), async (req, res) => {
+  try {
+    const { item_id } = req.body || {};
+    if (!item_id) return res.status(400).json({ error: "item_id is required" });
+
+    const pool = getPool();
+    await ensureCatalogTables(pool);
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
+
+    const centsPerPoint = await getOrgCentsPerPoint(pool, orgId);
+    const raw = await ebayApiGet(`/buy/browse/v1/item/${encodeURIComponent(item_id)}`);
+    const item = normalizeEbayItem(raw, centsPerPoint);
+
+    await pool.query(
+      `INSERT INTO SPONSORCATALOGITEMS
+       (org_id, ebay_item_id, title, image_url, item_web_url, description, condition_text,
+        availability_status, price_value, currency, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         title = VALUES(title),
+         image_url = VALUES(image_url),
+         item_web_url = VALUES(item_web_url),
+         description = VALUES(description),
+         condition_text = VALUES(condition_text),
+         availability_status = VALUES(availability_status),
+         price_value = VALUES(price_value),
+         currency = VALUES(currency),
+         last_synced_at = NOW()`,
+      [
+        orgId,
+        item.item_id,
+        item.title,
+        item.image_url,
+        item.item_web_url,
+        item.description,
+        item.condition,
+        item.availability_status,
+        item.price_value,
+        item.currency,
+        req.session.user.user_id
+      ]
+    );
+
+    res.json({ ok: true, item });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/sponsor/catalog/items/:catalogItemId", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureCatalogTables(pool);
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
+
+    await pool.query(
+      "DELETE FROM SPONSORCATALOGITEMS WHERE catalog_item_id = ? AND org_id = ?",
+      [req.params.catalogItemId, orgId]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/driver/catalog", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureCatalogTables(pool);
+    const orgId = await getDriverOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Driver sponsor org not found" });
+
+    const [rows] = await pool.query(
+      `SELECT catalog_item_id, org_id, ebay_item_id, title, image_url, item_web_url, description,
+              condition_text, availability_status, price_value, currency, last_synced_at, created_at
+       FROM SPONSORCATALOGITEMS
+       WHERE org_id = ?
+       ORDER BY created_at DESC`,
+      [orgId]
+    );
+
+    const items = await refreshCatalogRows(pool, orgId, rows);
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/driver/cart", requireRole("driver"), async (req, res) => {
+  res.json({ ok: true, items: req.session.cart?.items || [] });
+});
+
+app.post("/api/driver/cart/items", requireRole("driver"), async (req, res) => {
+  try {
+    const { item_id, quantity } = req.body || {};
+    const qty = Math.max(1, Number(quantity || 1));
+    if (!item_id) return res.status(400).json({ error: "item_id is required" });
+
+    const pool = getPool();
+    await ensureCatalogTables(pool);
+    const orgId = await getDriverOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Driver sponsor org not found" });
+
+    const [catalogRows] = await pool.query(
+      "SELECT * FROM SPONSORCATALOGITEMS WHERE org_id = ? AND ebay_item_id = ? LIMIT 1",
+      [orgId, item_id]
+    );
+    if (!catalogRows.length) {
+      return res.status(403).json({ error: "Item is not in your sponsor catalog" });
+    }
+
+    const centsPerPoint = await getOrgCentsPerPoint(pool, orgId);
+    const raw = await ebayApiGet(`/buy/browse/v1/item/${encodeURIComponent(item_id)}`);
+    const liveItem = normalizeEbayItem(raw, centsPerPoint);
+
+    if (["OUT_OF_STOCK", "UNAVAILABLE", "SOLD_OUT"].includes(String(liveItem.availability_status || "").toUpperCase())) {
+      return res.status(400).json({ error: "Item is currently unavailable" });
+    }
+
+    if (!req.session.cart) req.session.cart = { items: [] };
+    const existing = req.session.cart.items.find((item) => item.item_id === item_id);
+    if (existing) {
+      existing.quantity += qty;
+      existing.points_cost = liveItem.points_cost;
+      existing.price_value = liveItem.price_value;
+      existing.availability_status = liveItem.availability_status;
+    } else {
+      req.session.cart.items.push({ ...liveItem, quantity: qty });
+    }
+
+    res.json({ ok: true, items: req.session.cart.items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/driver/cart/items/:itemId", requireRole("driver"), async (req, res) => {
+  if (!req.session.cart?.items) return res.json({ ok: true, items: [] });
+  const qty = Math.max(1, Number(req.body?.quantity || 1));
+  req.session.cart.items = req.session.cart.items.map((item) => item.item_id === req.params.itemId ? { ...item, quantity: qty } : item);
+  res.json({ ok: true, items: req.session.cart.items });
+});
+
+app.delete("/api/driver/cart/items/:itemId", requireRole("driver"), async (req, res) => {
+  req.session.cart = req.session.cart || { items: [] };
+  req.session.cart.items = (req.session.cart.items || []).filter((item) => item.item_id !== req.params.itemId);
+  res.json({ ok: true, items: req.session.cart.items });
+});
+
+app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) => {
+  const conn = await getPool().getConnection();
+  try {
+    const cartItems = req.session.cart?.items || [];
+    if (!cartItems.length) return res.status(400).json({ error: "Your cart is empty" });
+
+    await conn.beginTransaction();
+
+    const userId = req.session.user.user_id;
+    const orgId = await getDriverOrgId(conn, userId);
+    if (!orgId) {
+      await conn.rollback();
+      return res.status(404).json({ error: "Driver sponsor org not found" });
+    }
+
+    const centsPerPoint = await getOrgCentsPerPoint(conn, orgId);
+    let totalPoints = 0;
+    const liveItems = [];
+
+    for (const item of cartItems) {
+      const [catalogRows] = await conn.query(
+        "SELECT 1 FROM SPONSORCATALOGITEMS WHERE org_id = ? AND ebay_item_id = ? LIMIT 1",
+        [orgId, item.item_id]
+      );
+      if (!catalogRows.length) {
+        await conn.rollback();
+        return res.status(403).json({ error: `Item ${item.title || item.item_id} is no longer in your sponsor catalog` });
+      }
+
+      const raw = await ebayApiGet(`/buy/browse/v1/item/${encodeURIComponent(item.item_id)}`);
+      const liveItem = normalizeEbayItem(raw, centsPerPoint);
+      if (["OUT_OF_STOCK", "UNAVAILABLE", "SOLD_OUT"].includes(String(liveItem.availability_status || "").toUpperCase())) {
+        await conn.rollback();
+        return res.status(400).json({ error: `${liveItem.title} is currently unavailable` });
+      }
+      totalPoints += liveItem.points_cost * Number(item.quantity || 1);
+      liveItems.push({ ...liveItem, quantity: Number(item.quantity || 1) });
+    }
+
+    const [balanceRows] = await conn.query(
+      "SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? LIMIT 1",
+      [userId]
+    );
+    const currentPoints = balanceRows.length ? Number(balanceRows[0].current_points || 0) : 0;
+    if (currentPoints < totalPoints) {
+      await conn.rollback();
+      return res.status(400).json({ error: `Insufficient points. Required ${totalPoints}, available ${currentPoints}.` });
+    }
+
+    const [purchaseResult] = await conn.query(
+      `INSERT INTO PURCHASES (user_id, org_id, created_by_user_id, purchase_status)
+       VALUES (?, ?, ?, 'PENDING')`,
+      [userId, orgId, userId]
+    );
+
+    for (const item of liveItems) {
+      await conn.query(
+        `INSERT INTO PURCHASEITEMS (purchase_id, product_id, quantity, product_name, points_cost)
+         VALUES (?, ?, ?, ?, ?)`,
+        [purchaseResult.insertId, item.item_id, item.quantity, item.title, item.points_cost]
+      );
+    }
+
+    await conn.query(
+      "UPDATE PURCHASES SET purchase_status = 'COMPLETED' WHERE purchase_id = ?",
+      [purchaseResult.insertId]
+    );
+
+    await conn.query(
+      `INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+       VALUES (?, 'ORDER_PLACED', ?, 'PURCHASE', ?)`,
+      [userId, `Order placed successfully. Total points used: ${totalPoints}.`, purchaseResult.insertId]
+    );
+
+    await conn.commit();
+    req.session.cart = { items: [] };
+    res.json({ ok: true, purchase_id: purchaseResult.insertId, total_points: totalPoints });
+  } catch (e) {
+    try {
+      await conn.rollback();
+    } catch (_) {
+      // ignore rollback errors
+    }
+    res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.get("/api/driver/purchases", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const [rows] = await pool.query(
+      `SELECT purchase_id, purchase_status, confirmed_at, created_at
+       FROM PURCHASES
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [userId]
+    );
+    res.json({ ok: true, purchases: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
