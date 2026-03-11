@@ -1029,6 +1029,45 @@ app.get("/api/sponsor/driver-point-transactions", requireRole("sponsor"), async 
   }
 });
 
+app.get("/api/admin/audit-log", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+
+    const { startDate, endDate, actionType } = req.query;
+
+    let query = `
+      SELECT *
+      FROM vw_admin_audit_log
+      WHERE 1=1
+    `;
+
+    const params = [];
+
+    if (startDate) {
+      query += " AND time_done >= ?";
+      params.push(new Date(startDate));
+    }
+
+    if (endDate) {
+      query += " AND time_done <= ?";
+      params.push(new Date(endDate));
+    }
+
+    if (actionType) {
+      query += " AND action_type = ?";
+      params.push(actionType);
+    }
+
+    query += " ORDER BY time_done DESC LIMIT 200";
+
+    const [rows] = await pool.query(query, params);
+
+    res.json({ ok: true, audit_logs: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
