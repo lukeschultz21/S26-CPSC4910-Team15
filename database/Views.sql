@@ -5,6 +5,7 @@ DROP VIEW IF EXISTS vw_sponsor_top_drivers_by_points_earned;
 DROP VIEW IF EXISTS vw_sponsor_driver_point_transactions;
 DROP VIEW IF EXISTS vw_sponsor_driver_point_balances;
 DROP VIEW IF EXISTS vw_user_notifications;
+DROP VIEW IF EXISTS vw_admin_audit_log;
 
 -- 1) Org-wide notifications for drivers currently in that org
 -- NOTE: This is "current org membership" based on DRIVERS.org_id
@@ -113,3 +114,31 @@ SELECT
   n.entity_type,
   n.entity_id
 FROM NOTIFICATIONS n;
+
+-- Audit log view for admin reporting 
+CREATE VIEW vw_admin_audit_log AS
+SELECT
+  a.audit_id,
+  a.action_type,
+  a.actor_user_id,
+  actor.email AS actor_email,
+  actor.first_name AS actor_first_name,
+  actor.last_name AS actor_last_name,
+
+  a.actee_user_id,
+  actee.email AS actee_email,
+
+  a.org_id,
+  a.entity_type,
+  a.entity_id,
+  a.details,
+  a.time_done,
+  a.success,
+  a.notes
+FROM AUDITLOG a
+
+LEFT JOIN USERS actor
+  ON actor.user_id = a.actor_user_id
+
+LEFT JOIN USERS actee
+  ON actee.user_id = a.actee_user_id;
