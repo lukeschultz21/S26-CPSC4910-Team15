@@ -1385,6 +1385,222 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
   }
 });
 
+// ============================================
+// Driver: Get my most recent application/status
+// ============================================
+app.get("/api/driver/application", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    // Get the most recent application for this driver (if multiple exist)
+    const [rows] = await pool.query(
+      `SELECT
+         da.application_id,
+         da.org_id,
+         da.application_status,
+         da.application_date,
+         so.org_name
+       FROM DRIVERAPPLICATIONS da
+       LEFT JOIN SPONSORORGANIZATION so ON so.org_id = da.org_id
+       WHERE da.user_id = ?
+       ORDER BY da.application_date DESC, da.application_id DESC
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!rows.length) {
+      return res.json({ ok: true, application: null });
+    }
+
+    return res.json({ ok: true, application: rows[0] });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// Driver: Submit a new application to a sponsor org
+// ============================================
+app.post("/api/driver/applications", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    const { org_id, message } = req.body || {};
+    const orgId = Number(org_id);
+
+    if (!orgId || Number.isNaN(orgId)) {
+      return res.status(400).json({ error: "org_id is required" });
+    }
+
+    const msg = String(message || "").trim();
+    if (msg.length > 225) {
+      return res.status(400).json({ error: "Message must be 225 characters or less" });
+    }
+
+    // Verify sponsor org exists and is active
+    const [orgRows] = await pool.query(
+      "SELECT org_id, org_name, org_status FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [orgId]
+    );
+    if (!orgRows.length) return res.status(404).json({ error: "Sponsor organization not found" });
+    if (String(orgRows[0].org_status).toLowerCase() !== "active") {
+      return res.status(400).json({ error: "Sponsor organization is not active" });
+    }
+
+    // Enforce: only one pending application at a time
+    const [pendingRows] = await pool.query(
+      `SELECT application_id
+       FROM DRIVERAPPLICATIONS
+       WHERE user_id = ?
+         AND application_status = 'PENDING'
+       ORDER BY application_date DESC, application_id DESC
+       LIMIT 1`,
+      [userId]
+    );
+    if (pendingRows.length) {
+      return res.status(409).json({
+        error: "You already have a pending application. Withdraw it before applying to a different sponsor."
+      });
+    }
+
+    // Create application
+    const [result] = await pool.query(
+      `INSERT INTO DRIVERAPPLICATIONS
+        (user_id, org_id, application_status, is_active, application_date, decision_reason)
+       VALUES
+        (?, ?, 'PENDING', 1, NOW(), ?)`,
+      [userId, orgId, msg || null]
+    );
+
+    const applicationId = result.insertId;
+
+    // Audit log
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["SUBMIT_APPLICATION", "DRIVERAPPLICATION", applicationId, userId, JSON.stringify({ org_id: orgId })]
+    );
+
+    // Notify sponsor users (optional but recommended)
+    const [sponsorUsers] = await pool.query(
+      "SELECT user_id FROM SPONSORUSERS WHERE org_id = ?",
+      [orgId]
+    );
+    const orgName = orgRows[0].org_name || "your organization";
+    const noteMsg = `A driver submitted a new application for ${orgName}. (application_id: ${applicationId})`;
+
+    for (const su of sponsorUsers) {
+      await pool.query(
+        "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+        [su.user_id, "APPLICATION_SUBMITTED", noteMsg, "DRIVERAPPLICATION", applicationId]
+      );
+    }
+
+    return res.json({ ok: true, application_id: applicationId });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// =============================
+// Driver: Withdraw application
+// =============================
+app.put("/api/driver/withdraw-application", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const { application_id } = req.body || {};
+
+    if (!application_id) {
+      return res.status(400).json({ error: "application_id is required" });
+    }
+
+    // Fetch application
+    const [appRows] = await pool.query(
+      "SELECT application_id, user_id, org_id, application_status FROM DRIVERAPPLICATIONS WHERE application_id = ? LIMIT 1",
+      [application_id]
+    );
+
+    if (!appRows.length) {
+      return res.status(404).json({ error: "Application not found" });
+    }
+
+    const application = appRows[0];
+
+    // Driver can only withdraw their own application
+    if (Number(application.user_id) !== Number(actorUserId)) {
+      return res.status(403).json({ error: "You can only withdraw your own application" });
+    }
+
+    // Only allow withdrawing PENDING apps
+    if (String(application.application_status).toUpperCase() !== "PENDING") {
+      return res.status(400).json({ error: "Only PENDING applications can be withdrawn" });
+    }
+
+    // Mark withdrawn
+    await pool.query(
+      "UPDATE DRIVERAPPLICATIONS SET application_status = 'REVOKED' WHERE application_id = ?",
+      [application_id]
+    );
+
+    // Audit log
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["WITHDRAW_APPLICATION", "DRIVERAPPLICATION", application_id, actorUserId, JSON.stringify({ org_id: application.org_id })]
+    );
+
+    // Notify sponsor users for that org
+    const [sponsorUsers] = await pool.query(
+      "SELECT user_id FROM SPONSORUSERS WHERE org_id = ?",
+      [application.org_id]
+    );
+
+    // Look up org name (optional, used for message)
+    const [orgNameRows] = await pool.query(
+      "SELECT org_name FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [application.org_id]
+    );
+    const orgName = orgNameRows.length ? orgNameRows[0].org_name : "your organization";
+
+    const message = `A driver has withdrawn their pending application for ${orgName}. (application_id: ${application_id})`;
+
+    for (const su of sponsorUsers) {
+      await pool.query(
+        "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+        [su.user_id, "APPLICATION_WITHDRAWN", message, "DRIVERAPPLICATION", application_id]
+      );
+    }
+
+    return res.json({ ok: true, message: "Application withdrawn successfully" });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// Driver: Sponsor search/list (by org name)
+// ============================================
+app.get("/api/driver/sponsors", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const q = String(req.query.q || "").trim();
+
+    const sql = `
+      SELECT org_id, org_name, org_status
+      FROM SPONSORORGANIZATION
+      WHERE org_status = 'active'
+        AND (? = '' OR org_name LIKE CONCAT('%', ?, '%'))
+      ORDER BY org_name ASC
+      LIMIT 100
+    `;
+
+    const [rows] = await pool.query(sql, [q, q]);
+    res.json({ ok: true, sponsors: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // -----------------------------
 // eBay catalog routes
