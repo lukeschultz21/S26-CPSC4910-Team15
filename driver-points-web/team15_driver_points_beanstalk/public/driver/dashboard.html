@@ -71,9 +71,66 @@
       font-weight: bold;
     }
 
+    /* Sponsor search styles */
+    .search-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    .sponsor-list {
+      margin-top: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .sponsor-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .sponsor-name {
+      font-weight: 600;
+    }
+
+    .sponsor-meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .apply-form {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px dashed #ddd;
+      border-radius: 8px;
+      background: rgba(59, 130, 246, 0.03);
+    }
+
+    .apply-form textarea {
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+    }
+
     @media (max-width: 768px) {
       .filter-controls {
         grid-template-columns: 1fr;
+      }
+      .search-row {
+        grid-template-columns: 1fr;
+      }
+      .sponsor-item {
+        flex-direction: column;
+        align-items: stretch;
       }
     }
   </style>
@@ -98,8 +155,50 @@
       <div class="small" id="welcome"></div>
     </div>
 
+    <!-- Application Status Section -->
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">My Application</h3>
+      <div class="small" id="appSubtitle">Loading application status...</div>
+
+      <div class="row" style="margin-top:12px; gap: 10px; align-items:center;">
+        <div>
+          <span class="pill-status" id="appStatusPill">-</span>
+        </div>
+        <button class="btn btn-danger" id="withdrawBtn" style="display:none;">Withdraw Application</button>
+      </div>
+
+      <div class="msg" id="appMsg" style="margin-top:10px"></div>
+    </div>
+
+    <!-- Sponsor Search + Apply -->
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">Find a Sponsor</h3>
+      <div class="small">Search sponsor organizations and apply to their program.</div>
+
+      <div class="search-row">
+        <input id="sponsorSearchInput" placeholder="Search by sponsor name (ex: Acme Logistics)" />
+        <button class="btn" id="sponsorSearchBtn" type="button">Search</button>
+      </div>
+
+      <div class="msg" id="sponsorSearchMsg" style="margin-top:10px"></div>
+      <div class="sponsor-list" id="sponsorList"></div>
+
+      <div class="apply-form" id="applyForm" style="display:none;">
+        <div class="small" id="applyToLabel" style="margin-bottom:8px;">Applying to:</div>
+        <label for="applyMessage">Message (optional, 225 characters max)</label>
+        <textarea id="applyMessage" maxlength="225" placeholder="Short message to the sponsor..."></textarea>
+
+        <div class="row" style="margin-top:10px; gap: 8px;">
+          <button class="btn primary" id="submitApplicationBtn" type="button">Submit Application</button>
+          <button class="btn ghost" id="cancelApplicationBtn" type="button">Cancel</button>
+        </div>
+
+        <div class="msg" id="applyMsg" style="margin-top:10px"></div>
+      </div>
+    </div>
+
     <!-- Current Points Display Section -->
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); margin-top:18px;">
       <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Current Points Balance</h3>
       <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="pointsAmount">0</div>
     </div>
@@ -121,7 +220,6 @@
       <h3 style="margin:0 0 6px">Point History & Transactions</h3>
       <div class="small">Track your point additions and deductions with detailed reasons.</div>
 
-      <!-- Date Range Filter Section -->
       <div class="filter-section">
         <label>Filter by Date Range:</label>
         <div class="filter-controls">
@@ -138,7 +236,6 @@
         </div>
       </div>
 
-      <!-- Point History Table -->
       <table class="table" id="txTable">
         <thead>
           <tr>
@@ -164,13 +261,34 @@
       const msg = Team15.qs("#msg");
       const historyMsg = Team15.qs("#historyMsg");
 
+      // Application UI
+      const appSubtitle = Team15.qs("#appSubtitle");
+      const appStatusPill = Team15.qs("#appStatusPill");
+      const withdrawBtn = Team15.qs("#withdrawBtn");
+      const appMsg = Team15.qs("#appMsg");
+      let currentApplicationId = null;
+
+      // Sponsor search/apply UI
+      const sponsorSearchInput = Team15.qs("#sponsorSearchInput");
+      const sponsorSearchBtn = Team15.qs("#sponsorSearchBtn");
+      const sponsorSearchMsg = Team15.qs("#sponsorSearchMsg");
+      const sponsorList = Team15.qs("#sponsorList");
+
+      const applyForm = Team15.qs("#applyForm");
+      const applyToLabel = Team15.qs("#applyToLabel");
+      const applyMessage = Team15.qs("#applyMessage");
+      const submitApplicationBtn = Team15.qs("#submitApplicationBtn");
+      const cancelApplicationBtn = Team15.qs("#cancelApplicationBtn");
+      const applyMsg = Team15.qs("#applyMsg");
+
+      let applyingOrgId = null;
+      let applyingOrgName = "";
+
       function renderRow(tx) {
-        // Handle the date properly - created_at comes as ISO string or timestamp
         let dateStr = "Invalid Date";
         if (tx.created_at) {
           const date = new Date(tx.created_at);
           if (!isNaN(date.getTime())) {
-            // Format as MM/DD/YYYY HH:MM
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');
             const year = date.getFullYear();
@@ -247,17 +365,181 @@
         loadPointHistory();
       }
 
+      function statusLabel(statusRaw) {
+        const s = String(statusRaw || "").toUpperCase();
+        if (s === "PENDING") return "Pending";
+        if (s === "APPROVED") return "Approved";
+        if (s === "REJECTED") return "Rejected";
+        if (s === "REVOKED") return "Withdrawn";
+        return s ? (s.charAt(0) + s.slice(1).toLowerCase()) : "-";
+      }
+
+      async function loadMyApplication() {
+        appMsg.textContent = "";
+        withdrawBtn.style.display = "none";
+        currentApplicationId = null;
+
+        try {
+          const data = await Team15.api("/api/driver/application", { method: "GET" });
+          const app = data.application;
+
+          if (!app) {
+            appSubtitle.textContent = "No applications yet.";
+            appStatusPill.textContent = "-";
+            return;
+          }
+
+          currentApplicationId = app.application_id;
+          const status = String(app.application_status || "").toUpperCase();
+
+          appSubtitle.textContent = app.org_name
+            ? `Sponsor: ${app.org_name}`
+            : `Sponsor org_id: ${app.org_id}`;
+
+          appStatusPill.textContent = statusLabel(status);
+
+          if (status === "PENDING") {
+            withdrawBtn.style.display = "inline-block";
+          }
+        } catch (e) {
+          appSubtitle.textContent = "Error loading application.";
+          appMsg.textContent = e.message;
+        }
+      }
+
+      withdrawBtn.addEventListener("click", async () => {
+        if (!currentApplicationId) return;
+        if (!confirm("Withdraw your pending application?")) return;
+
+        try {
+          await Team15.api("/api/driver/withdraw-application", {
+            method: "PUT",
+            body: JSON.stringify({ application_id: currentApplicationId })
+          });
+
+          appMsg.textContent = "Application withdrawn.";
+          await loadMyApplication();
+        } catch (e) {
+          appMsg.textContent = "Error: " + e.message;
+        }
+      });
+
+      function hideApplyForm() {
+        applyForm.style.display = "none";
+        applyingOrgId = null;
+        applyingOrgName = "";
+        applyToLabel.textContent = "Applying to:";
+        applyMessage.value = "";
+        applyMsg.textContent = "";
+      }
+
+      function showApplyForm(orgId, orgName) {
+        applyingOrgId = Number(orgId);
+        applyingOrgName = String(orgName || "").trim();
+        applyToLabel.textContent = applyingOrgName
+          ? `Applying to: ${applyingOrgName}`
+          : `Applying to org_id: ${applyingOrgId}`;
+        applyMsg.textContent = "";
+        applyForm.style.display = "block";
+        applyMessage.focus();
+      }
+
+      function sponsorRow(org) {
+        const name = org.org_name || `Org ${org.org_id}`;
+        const safeName = String(name).replace(/'/g, "\\'");
+        return `
+          <div class="sponsor-item">
+            <div>
+              <div class="sponsor-name">${name}</div>
+              <div class="sponsor-meta">org_id: ${org.org_id}</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end;">
+              <button class="btn" type="button" onclick="startApply(${org.org_id}, '${safeName}')">Apply</button>
+            </div>
+          </div>
+        `;
+      }
+
+      async function runSponsorSearch() {
+        sponsorSearchMsg.textContent = "";
+        sponsorList.innerHTML = "";
+        hideApplyForm();
+
+        const q = sponsorSearchInput.value.trim();
+        sponsorSearchMsg.textContent = "Searching sponsors...";
+
+        try {
+          const data = await Team15.api(`/api/driver/sponsors?q=${encodeURIComponent(q)}`, { method: "GET" });
+          const sponsors = data.sponsors || [];
+
+          if (!sponsors.length) {
+            sponsorSearchMsg.textContent = "No sponsor organizations found.";
+            return;
+          }
+
+          sponsorSearchMsg.textContent = `Showing ${sponsors.length} sponsor(s).`;
+          sponsorList.innerHTML = sponsors.map(sponsorRow).join("");
+        } catch (e) {
+          sponsorSearchMsg.textContent = "Error: " + e.message;
+        }
+      }
+
+      // Expose for inline onclick
+      window.startApply = (orgId, orgName) => {
+        showApplyForm(orgId, orgName);
+      };
+
+      cancelApplicationBtn.addEventListener("click", () => hideApplyForm());
+
+      submitApplicationBtn.addEventListener("click", async () => {
+        applyMsg.textContent = "";
+
+        if (!applyingOrgId) {
+          applyMsg.textContent = "Select a sponsor first.";
+          return;
+        }
+
+        try {
+          submitApplicationBtn.disabled = true;
+
+          await Team15.api("/api/driver/applications", {
+            method: "POST",
+            body: JSON.stringify({
+              org_id: applyingOrgId,
+              message: applyMessage.value.trim()
+            })
+          });
+
+          applyMsg.textContent = "Application submitted!";
+          hideApplyForm();
+
+          // Refresh status card (so it shows Pending + withdraw button)
+          await loadMyApplication();
+        } catch (e) {
+          applyMsg.textContent = "Error: " + e.message;
+        } finally {
+          submitApplicationBtn.disabled = false;
+        }
+      });
+
+      sponsorSearchBtn.addEventListener("click", runSponsorSearch);
+      sponsorSearchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") runSponsorSearch();
+      });
+
       async function init() {
         const me = await Team15.loadMe();
         if (!me) return window.location.href = "/login.html";
         if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
 
         if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
-
-        // ✅ Avatar/Profile menu (safe call)
         if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
 
         welcome.textContent = `Signed in as ${me.email}`;
+
+        // Sprint 6: application status + sponsor search/apply
+        loadMyApplication();
+        runSponsorSearch();
 
         try {
           const p = await Team15.api("/api/driver/points", { method: "GET" });
@@ -280,7 +562,6 @@
           msg.textContent = e.message;
         }
 
-        // Load initial point history
         loadPointHistory();
       }
 
@@ -291,5 +572,6 @@
 
       init();
     </script>
-  </body>
+  </div>
+</body>
 </html>
