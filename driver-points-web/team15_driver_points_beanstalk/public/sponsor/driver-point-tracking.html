@@ -28,18 +28,45 @@
     </div>
 
     <div class="card" style="margin-top:18px">
-      <table class="table" id="txTable">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Driver</th>
-            <th>Change</th>
-            <th>Reason</th>
-            <th>Actor</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <h3 style="margin:0 0 10px">Filters</h3>
+      <div class="row">
+        <div>
+          <label>Driver User ID</label>
+          <input type="number" id="driverUserId" placeholder="e.g. 3" />
+        </div>
+
+        <div>
+          <label>Start Date</label>
+          <input type="date" id="startDate" />
+        </div>
+
+        <div>
+          <label>End Date</label>
+          <input type="date" id="endDate" />
+        </div>
+
+        <div style="align-self:flex-end; display:flex; gap:10px;">
+          <button class="btn" id="filterBtn">Apply Filter</button>
+          <button class="btn ghost small-btn" id="downloadCsvBtn">CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div style="overflow-x:auto;">
+        <table class="table" id="txTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Driver</th>
+              <th>Change</th>
+              <th>Reason</th>
+              <th>Actor</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -48,6 +75,7 @@
     const subtitle = Team15.qs("#subtitle");
     const msg = Team15.qs("#msg");
     const tbody = Team15.qs("#txTable tbody");
+    let currentTransactions = [];
 
     function fmtDate(iso) {
       if (!iso) return "";
@@ -55,19 +83,64 @@
       return d.toLocaleString();
     }
 
-    async function init() {
-      const me = await Team15.loadMe();
-      if (!me) return window.location.href = "/login.html";
-      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+    function downloadCsv() {
+      if (!currentTransactions.length) {
+        msg.textContent = "No transaction data to export.";
+        return;
+      }
 
-      subtitle.textContent = `Signed in as ${me.email}`;
+      const headers = ["Date", "Driver", "Change", "Reason", "Actor"];
 
+      const rows = currentTransactions.map(t => {
+        const driverName = `${t.driver_first_name || ""} ${t.driver_last_name || ""}`.trim() || t.driver_email || t.driver_user_id;
+        const actorName = `${t.actor_first_name || ""} ${t.actor_last_name || ""}`.trim() || t.actor_email || t.actor_user_id;
+        const change = Number(t.point_change);
+
+        return [
+          t.created_at || "",
+          driverName,
+          change,
+          t.reason || "",
+          actorName
+        ];
+      });
+
+      const csv = [headers, ...rows]
+        .map(row =>
+          row
+            .map(value => `"${String(value).replace(/"/g, '""')}"`)
+            .join(",")
+        )
+        .join("\n");
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "driver_point_tracking_report.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
+    }
+
+    async function loadTransactions(filters = {}) {
       try {
-        const data = await Team15.api("/api/sponsor/driver-point-transactions", { method: "GET" });
+        let url = "/api/sponsor/driver-point-transactions";
+        const params = new URLSearchParams(filters);
+
+        if (params.toString()) {
+          url += "?" + params.toString();
+        }
+
+        const data = await Team15.api(url, { method: "GET" });
         const txs = data.transactions || [];
+        currentTransactions = txs;
 
         if (!txs.length) {
-          msg.textContent = "No point transactions found for your organization yet.";
+          msg.textContent = "No point transactions found for your filter.";
           tbody.innerHTML = "";
           return;
         }
@@ -93,6 +166,32 @@
         msg.textContent = e.message;
       }
     }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+
+      subtitle.textContent = `Signed in as ${me.email}`;
+      await loadTransactions();
+    }
+
+    Team15.qs("#filterBtn").addEventListener("click", () => {
+      const driver_user_id = Team15.qs("#driverUserId").value;
+      const startDate = Team15.qs("#startDate").value;
+      const endDate = Team15.qs("#endDate").value;
+
+      const filters = {};
+      if (driver_user_id) filters.driver_user_id = driver_user_id;
+      if (startDate) filters.startDate = startDate;
+      if (endDate) filters.endDate = endDate;
+
+      loadTransactions(filters);
+    });
+
+    Team15.qs("#downloadCsvBtn").addEventListener("click", () => {
+      downloadCsv();
+    });
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
       await Team15.api("/api/logout", { method: "POST" });
