@@ -118,6 +118,11 @@ a{color:inherit;text-decoration:none}
   background:transparent;
 }
 
+.small-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 /* ========== GRID & LAYOUT ========== */
 .grid{
   display:grid;
