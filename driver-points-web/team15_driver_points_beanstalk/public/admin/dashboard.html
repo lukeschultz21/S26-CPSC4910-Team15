@@ -15,6 +15,7 @@
       </div>
       <div class="navlinks">
         <a class="btn ghost" href="/admin/reports.html">Reports</a>
+        <a class="btn ghost" href="/admin/purchases.html">Purchases</a>
         <a class="btn ghost" href="/admin/audit-log.html">Audit Log</a>
         <a class="btn ghost" href="/change-password.html">Change Password</a>
         <button class="btn" id="logoutBtn">Logout</button>
@@ -148,6 +149,7 @@
 
           const editBtn = `<button class="btn ghost" data-action="edit" data-id="${u.user_id}">Edit</button>`;
           const resetBtn = `<button class="btn ghost" data-action="reset-pw" data-id="${u.user_id}">Reset PW</button>`;
+          const pointsBtn = Number(u.is_driver) === 1 ? `<button class="btn" data-action="adjust-points" data-id="${u.user_id}">Adjust Points</button>` : "";
           const impDriverBtn = `<button class="btn" data-action="imp-driver" data-id="${u.user_id}">Assume Driver</button>`;
           const impSponsorBtn = `<button class="btn" data-action="imp-sponsor" data-id="${u.user_id}">Assume Sponsor</button>`;
 
@@ -168,6 +170,7 @@
                 ${makeAdminBtn}
                 ${statusBtn}
                 ${resetBtn}
+                ${pointsBtn}
                 ${impDriverBtn}
                 ${impSponsorBtn}
               </td>
@@ -251,6 +254,20 @@
             body: JSON.stringify({ password: pw })
           });
           userMsg.textContent = `Password reset for user ${userId}.`;
+        }
+
+        if (action === "adjust-points") {
+          const rawPoints = window.prompt("Enter point adjustment. Use positive to add or negative to deduct:", "100");
+          if (rawPoints === null) return;
+          const point_change = Number(rawPoints);
+          if (!Number.isFinite(point_change) || point_change === 0) throw new Error("Enter a non-zero number of points.");
+          const reason = window.prompt("Reason for point adjustment:", point_change > 0 ? "Admin manual adjustment" : "Admin deduction");
+          if (reason === null || !reason.trim()) throw new Error("Reason is required.");
+          const data = await Team15.api(`/api/driver/points`, {
+            method: "PUT",
+            body: JSON.stringify({ user_id: Number(userId), point_change, reason })
+          });
+          userMsg.textContent = `Driver ${userId} updated from ${data.oldPoints} to ${data.newPoints} points.`;
         }
 
         if (action === "make-sponsor") {
