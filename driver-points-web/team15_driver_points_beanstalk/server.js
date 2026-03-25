@@ -267,6 +267,27 @@ async function getDriverOrgId(pool, userId) {
   return rows.length ? Number(rows[0].org_id) : null;
 }
 
+async function createNotification(db, userId, notificationType, message, entityType = null, entityId = null) {
+  await db.query(
+    `INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, notificationType, message, entityType, entityId]
+  );
+}
+
+async function getPurchaseById(pool, purchaseId) {
+  const [rows] = await pool.query(
+    `SELECT p.purchase_id, p.user_id, p.org_id, p.purchase_status, p.created_at,
+            u.email, u.first_name, u.last_name
+     FROM PURCHASES p
+     JOIN USERS u ON u.user_id = p.user_id
+     WHERE p.purchase_id = ?
+     LIMIT 1`,
+    [purchaseId]
+  );
+  return rows.length ? rows[0] : null;
+}
+
 async function refreshCatalogRows(pool, orgId, rows) {
   const centsPerPoint = await getOrgCentsPerPoint(pool, orgId);
   const refreshed = [];
@@ -809,37 +830,46 @@ app.get("/api/driver/total-points", requireRole("driver"), async (req, res) => {
 });
 
 app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) => {
+  const conn = await getPool().getConnection();
   try {
-    const pool = getPool();
     const actorUserId = req.session.user.user_id;
+    const actorRole = req.session.user.role;
     const { user_id, point_change, reason } = req.body;
 
-    // Validate point_change is a number
-    if (typeof point_change !== "number") {
+    if (typeof point_change !== "number" || Number.isNaN(point_change)) {
       return res.status(400).json({ error: "Points must be a number" });
     }
-
-    // Prevent zero transactions
     if (point_change === 0) {
       return res.status(400).json({ error: "Point change cannot be zero" });
     }
-
-    // Validate reason is provided
-    if (!reason || reason.trim() === "") {
+    if (!reason || !String(reason).trim()) {
       return res.status(400).json({ error: "Reason is required for point changes" });
     }
 
-    // Get the old points first
-    const [rows] = await pool.query("SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ?", [user_id]);
+    const [[driverRow]] = await conn.query(
+      `SELECT d.user_id, d.org_id, COALESCE(b.current_points, 0) AS current_points,
+              u.first_name, u.last_name
+       FROM DRIVERS d
+       JOIN USERS u ON u.user_id = d.user_id
+       LEFT JOIN DRIVERPOINTBALANCES b ON b.user_id = d.user_id
+       WHERE d.user_id = ?
+       LIMIT 1`,
+      [user_id]
+    );
 
-    if (!rows.length) {
+    if (!driverRow) {
       return res.status(404).json({ error: "Driver not found" });
     }
 
-    const oldPoints = rows[0].current_points;
-    const newPoints = oldPoints + point_change;
+    if (actorRole === "sponsor") {
+      const sponsorOrgId = await getSponsorOrgId(conn, actorUserId);
+      if (!sponsorOrgId || Number(driverRow.org_id) !== Number(sponsorOrgId)) {
+        return res.status(403).json({ error: "You can only change points for drivers in your organization" });
+      }
+    }
 
-    // Prevent negative point balance
+    const oldPoints = Number(driverRow.current_points || 0);
+    const newPoints = oldPoints + Number(point_change);
     if (newPoints < 0) {
       return res.status(400).json({
         error: "Insufficient points. Cannot deduct more points than available.",
@@ -848,18 +878,36 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
       });
     }
 
-    // Update points
-    await pool.query("UPDATE DRIVERPOINTBALANCES SET current_points = ? WHERE user_id = ?", [newPoints, user_id]);
-
-    // Record the change with reason
-    await pool.query(
+    await conn.beginTransaction();
+    await conn.query(
+      `INSERT INTO DRIVERPOINTBALANCES (user_id, current_points)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE current_points = VALUES(current_points)`,
+      [user_id, newPoints]
+    );
+    await conn.query(
       "INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id) VALUES (?, ?, ?, ?, ?)",
-      [user_id, 1, point_change, reason.trim(), actorUserId]
+      [user_id, driverRow.org_id || null, point_change, String(reason).trim(), actorUserId]
     );
 
-    res.json({ ok: true, oldPoints, newPoints });
+    const actionWord = point_change > 0 ? "added" : "deducted";
+    const absPoints = Math.abs(Number(point_change));
+    await createNotification(
+      conn,
+      user_id,
+      "POINT_CHANGE",
+      `${absPoints} points were ${actionWord} to your account. Reason: ${String(reason).trim()}`,
+      "POINT_TRANSACTION",
+      null
+    );
+
+    await conn.commit();
+    res.json({ ok: true, oldPoints, newPoints, org_id: driverRow.org_id || null });
   } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
     res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
   }
 });
 
@@ -901,6 +949,17 @@ app.get("/api/driver/notifications", requireRole("driver"), async (req, res) => 
     );
 
     res.json({ ok: true, notifications: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/driver/notifications/read-all", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    await pool.query("UPDATE NOTIFICATIONS SET is_read = 1 WHERE user_id = ?", [userId]);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1896,19 +1955,28 @@ app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) =>
     }
 
     await conn.query(
-      "UPDATE PURCHASES SET purchase_status = 'COMPLETED' WHERE purchase_id = ?",
-      [purchaseResult.insertId]
+      "UPDATE DRIVERPOINTBALANCES SET current_points = current_points - ? WHERE user_id = ?",
+      [totalPoints, userId]
     );
 
     await conn.query(
-      `INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
-       VALUES (?, 'ORDER_PLACED', ?, 'PURCHASE', ?)`,
-      [userId, `Order placed successfully. Total points used: ${totalPoints}.`, purchaseResult.insertId]
+      `INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [userId, orgId, -totalPoints, `Purchase redemption #${purchaseResult.insertId}`, userId]
+    );
+
+    await createNotification(
+      conn,
+      userId,
+      "ORDER_PLACED",
+      `Order #${purchaseResult.insertId} placed successfully and is now pending review. Total points used: ${totalPoints}.`,
+      "PURCHASE",
+      purchaseResult.insertId
     );
 
     await conn.commit();
     req.session.cart = { items: [] };
-    res.json({ ok: true, purchase_id: purchaseResult.insertId, total_points: totalPoints });
+    res.json({ ok: true, purchase_id: purchaseResult.insertId, total_points: totalPoints, purchase_status: 'PENDING' });
   } catch (e) {
     try {
       await conn.rollback();
@@ -1916,6 +1984,177 @@ app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) =>
       // ignore rollback errors
     }
     res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.get("/api/driver/purchases", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const [rows] = await pool.query(
+      `SELECT p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at,
+              COALESCE(SUM(pi.points_cost * pi.quantity), 0) AS total_points,
+              COUNT(pi.purchase_item_id) AS item_count
+       FROM PURCHASES p
+       LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
+       WHERE p.user_id = ?
+       GROUP BY p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at
+       ORDER BY p.created_at DESC
+       LIMIT 50`,
+      [userId]
+    );
+    res.json({ ok: true, purchases: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+async function listPurchasesForRole(pool, role, actorUserId) {
+  let sql = `SELECT p.purchase_id, p.purchase_status, p.created_at, p.confirmed_at,
+                    p.user_id, p.org_id, u.email, u.first_name, u.last_name,
+                    COALESCE(SUM(pi.points_cost * pi.quantity), 0) AS total_points,
+                    COUNT(pi.purchase_item_id) AS item_count
+             FROM PURCHASES p
+             JOIN USERS u ON u.user_id = p.user_id
+             LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id`;
+  const params = [];
+  if (role === 'sponsor') {
+    const sponsorOrgId = await getSponsorOrgId(pool, actorUserId);
+    sql += ` WHERE p.org_id = ?`;
+    params.push(sponsorOrgId || 0);
+  }
+  sql += ` GROUP BY p.purchase_id, p.purchase_status, p.created_at, p.confirmed_at, p.user_id, p.org_id, u.email, u.first_name, u.last_name
+           ORDER BY p.created_at DESC
+           LIMIT 200`;
+  const [rows] = await pool.query(sql, params);
+  return rows;
+}
+
+async function updatePurchaseStatus(conn, purchaseId, nextStatus, actorUserId, actorRole) {
+  const allowed = new Set(['PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED']);
+  const normalizedStatus = String(nextStatus || '').toUpperCase();
+  if (!allowed.has(normalizedStatus)) {
+    const err = new Error('Invalid purchase status');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const purchase = await getPurchaseById(conn, purchaseId);
+  if (!purchase) {
+    const err = new Error('Purchase not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (actorRole === 'sponsor') {
+    const sponsorOrgId = await getSponsorOrgId(conn, actorUserId);
+    if (!sponsorOrgId || Number(sponsorOrgId) !== Number(purchase.org_id)) {
+      const err = new Error('Forbidden');
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
+  const currentStatus = String(purchase.purchase_status || '').toUpperCase();
+  if (currentStatus === normalizedStatus) {
+    return { purchase, refunded: false };
+  }
+  if (currentStatus === 'CANCELLED') {
+    const err = new Error('Cancelled purchases cannot be changed again');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [sumRows] = await conn.query(
+    `SELECT COALESCE(SUM(points_cost * quantity), 0) AS total_points
+     FROM PURCHASEITEMS
+     WHERE purchase_id = ?`,
+    [purchaseId]
+  );
+  const totalPoints = Number(sumRows[0]?.total_points || 0);
+
+  await conn.query(
+    `UPDATE PURCHASES
+     SET purchase_status = ?, confirmed_at = CASE WHEN ? = 'COMPLETED' THEN NOW() ELSE confirmed_at END,
+         updated_at = NOW()
+     WHERE purchase_id = ?`,
+    [normalizedStatus, normalizedStatus, purchaseId]
+  );
+
+  let refunded = false;
+  if (normalizedStatus === 'CANCELLED' && currentStatus !== 'CANCELLED' && totalPoints > 0) {
+    await conn.query(
+      `UPDATE DRIVERPOINTBALANCES
+       SET current_points = current_points + ?
+       WHERE user_id = ?`,
+      [totalPoints, purchase.user_id]
+    );
+    await conn.query(
+      `INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
+       VALUES (?, ?, ?, ?, ?)`,
+      [purchase.user_id, purchase.org_id, totalPoints, `Refund for cancelled purchase #${purchaseId}`, actorUserId]
+    );
+    refunded = true;
+  }
+
+  const messageMap = {
+    PENDING: `Order #${purchaseId} is pending review.`,
+    PROCESSING: `Order #${purchaseId} is being processed.`,
+    COMPLETED: `Order #${purchaseId} has been completed.`,
+    CANCELLED: refunded
+      ? `Order #${purchaseId} was cancelled. ${totalPoints} points were refunded to your account.`
+      : `Order #${purchaseId} was cancelled.`
+  };
+  await createNotification(conn, purchase.user_id, 'PURCHASE_STATUS', messageMap[normalizedStatus], 'PURCHASE', purchaseId);
+
+  return { purchase: { ...purchase, purchase_status: normalizedStatus }, refunded, totalPoints };
+}
+
+app.get('/api/sponsor/purchases', requireRole('sponsor'), async (req, res) => {
+  try {
+    const rows = await listPurchasesForRole(getPool(), 'sponsor', req.session.user.user_id);
+    res.json({ ok: true, purchases: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/sponsor/purchases/:purchaseId/status', requireRole('sponsor'), async (req, res) => {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await updatePurchaseStatus(conn, req.params.purchaseId, req.body.purchase_status, req.session.user.user_id, 'sponsor');
+    await conn.commit();
+    res.json({ ok: true, purchase: result.purchase, refunded: result.refunded, total_points: result.totalPoints || 0 });
+  } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(e.statusCode || 500).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.get('/api/admin/purchases', requireRole('admin'), async (req, res) => {
+  try {
+    const rows = await listPurchasesForRole(getPool(), 'admin', req.session.user.user_id);
+    res.json({ ok: true, purchases: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/purchases/:purchaseId/status', requireRole('admin'), async (req, res) => {
+  const conn = await getPool().getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await updatePurchaseStatus(conn, req.params.purchaseId, req.body.purchase_status, req.session.user.user_id, 'admin');
+    await conn.commit();
+    res.json({ ok: true, purchase: result.purchase, refunded: result.refunded, total_points: result.totalPoints || 0 });
+  } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(e.statusCode || 500).json({ error: e.message });
   } finally {
     conn.release();
   }

@@ -23,7 +23,10 @@
 
     <div class="card">
       <h2 style="margin:0 0 6px">Notifications</h2>
-      <div class="small" id="subtitle"></div>
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap">
+        <div class="small" id="subtitle"></div>
+        <button class="btn ghost" id="markReadBtn">Mark All Read</button>
+      </div>
       <div class="msg" id="msg" style="margin-top:10px"></div>
     </div>
 
@@ -84,6 +87,15 @@
         msg.textContent = e.message;
       }
     }
+
+    Team15.qs("#markReadBtn").addEventListener("click", async () => {
+      try {
+        await Team15.api("/api/driver/notifications/read-all", { method: "POST" });
+        await init();
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    });
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
       await Team15.api("/api/logout", { method: "POST" });

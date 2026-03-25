@@ -132,7 +132,7 @@
         const data = await Team15.api('/api/driver/purchases');
         const purchases = data.purchases || [];
         purchaseList.innerHTML = purchases.length
-          ? purchases.map(p => `Purchase #${p.purchase_id} · ${p.purchase_status} · ${new Date(p.created_at).toLocaleString()}`).join('<br>')
+          ? purchases.map(p => `Purchase #${p.purchase_id} · ${p.purchase_status} · ${Number(p.total_points || 0).toLocaleString()} pts · ${new Date(p.created_at).toLocaleString()}`).join('<br>')
           : 'No purchases yet.';
       } catch (e) {
         purchaseList.textContent = e.message;
@@ -177,7 +177,7 @@
       cartMsg.textContent = 'Submitting purchase...';
       try {
         const data = await Team15.api('/api/driver/cart/checkout', { method: 'POST' });
-        cartMsg.textContent = `Purchase completed. Order #${data.purchase_id} used ${Number(data.total_points || 0).toLocaleString()} points.`;
+        cartMsg.textContent = `Purchase submitted. Order #${data.purchase_id} used ${Number(data.total_points || 0).toLocaleString()} points and is now ${data.purchase_status || 'PENDING'}.`;
         await loadCart();
         await loadPurchases();
       } catch (e) {
