@@ -1073,33 +1073,14 @@ app.get("/api/sponsor/driver-point-transactions", requireRole("sponsor"), async 
     const orgId = await getSponsorOrgId(pool, sponsorUserId);
     if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
 
-    const { driver_user_id, startDate, endDate } = req.query;
-
-    let query = `
-      SELECT *
-      FROM vw_sponsor_driver_point_transactions
-      WHERE org_id = ?
-    `;
-    const params = [orgId];
-
-    if (driver_user_id) {
-      query += " AND driver_user_id = ?";
-      params.push(Number(driver_user_id));
-    }
-
-    if (startDate) {
-      query += " AND created_at >= ?";
-      params.push(startDate);
-    }
-
-    if (endDate) {
-      query += " AND created_at <= ?";
-      params.push(endDate + " 23:59:59");
-    }
-
-    query += " ORDER BY created_at DESC LIMIT 200";
-
-    const [rows] = await pool.query(query, params);
+    const [rows] = await pool.query(
+      `SELECT *
+       FROM vw_sponsor_driver_point_transactions
+       WHERE org_id = ?
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [orgId]
+    );
 
     res.json({ ok: true, org_id: orgId, transactions: rows });
   } catch (e) {
@@ -2257,6 +2238,255 @@ app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => 
     res.status(500).json({ error: e.message });
   }
 });
+
+
+// ============================================================
+// REPORTING ENDPOINTS (READ-ONLY)
+// ============================================================
+app.get("/api/admin/reports/users-by-role", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT role, COUNT(*) AS user_count
+      FROM (
+        SELECT 'admin' AS role, a.user_id FROM ADMIN a
+        UNION ALL
+        SELECT 'sponsor' AS role, su.user_id FROM SPONSORUSERS su
+        UNION ALL
+        SELECT 'driver' AS role, d.user_id FROM DRIVERS d
+        UNION ALL
+        SELECT 'user' AS role, u.user_id
+        FROM USERS u
+        LEFT JOIN ADMIN a ON a.user_id = u.user_id
+        LEFT JOIN SPONSORUSERS su ON su.user_id = u.user_id
+        LEFT JOIN DRIVERS d ON d.user_id = u.user_id
+        WHERE a.user_id IS NULL AND su.user_id IS NULL AND d.user_id IS NULL
+      ) roles
+      GROUP BY role
+      ORDER BY FIELD(role, 'admin', 'sponsor', 'driver', 'user');
+    `);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/reports/drivers", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT
+        d.user_id AS driver_user_id,
+        u.email AS driver_email,
+        u.first_name,
+        u.last_name,
+        d.driver_status,
+        d.org_id,
+        so.org_name,
+        COALESCE(dpb.current_points, 0) AS current_points,
+        dpb.updated_at AS balance_updated_at
+      FROM DRIVERS d
+      JOIN USERS u ON u.user_id = d.user_id
+      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = d.org_id
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+      ORDER BY u.last_name, u.first_name, d.user_id;
+    `);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/reports/points", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [balances] = await pool.query(`
+      SELECT
+        d.user_id AS driver_user_id,
+        u.email AS driver_email,
+        CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS driver_name,
+        d.org_id,
+        so.org_name,
+        COALESCE(dpb.current_points, 0) AS current_points,
+        dpb.updated_at AS balance_updated_at
+      FROM DRIVERS d
+      JOIN USERS u ON u.user_id = d.user_id
+      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = d.org_id
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+      ORDER BY current_points DESC, d.user_id ASC;
+    `);
+
+    const [totals] = await pool.query(`
+      SELECT
+        so.org_id,
+        so.org_name,
+        COALESCE(SUM(CASE WHEN pt.point_change > 0 THEN pt.point_change ELSE 0 END), 0) AS points_awarded,
+        COALESCE(SUM(CASE WHEN pt.point_change < 0 THEN ABS(pt.point_change) ELSE 0 END), 0) AS points_redeemed,
+        COALESCE(SUM(COALESCE(dpb.current_points, 0)), 0) AS current_points_held
+      FROM SPONSORORGANIZATION so
+      LEFT JOIN POINTTRANSACTIONS pt ON pt.org_id = so.org_id
+      LEFT JOIN DRIVERS d ON d.org_id = so.org_id
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+      GROUP BY so.org_id, so.org_name
+      ORDER BY so.org_name;
+    `);
+
+    res.json({ ok: true, balances, totals });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/reports/sales-by-sponsor", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT
+        so.org_id,
+        so.org_name,
+        COUNT(DISTINCT p.purchase_id) AS purchase_count,
+        COALESCE(SUM(pi.quantity), 0) AS total_items,
+        COALESCE(SUM(pi.points_cost), 0) AS total_points_spent
+      FROM SPONSORORGANIZATION so
+      LEFT JOIN PURCHASES p ON p.org_id = so.org_id
+      LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
+      GROUP BY so.org_id, so.org_name
+      ORDER BY total_points_spent DESC, so.org_name ASC;
+    `);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/reports/sales-by-driver", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT
+        p.user_id AS driver_user_id,
+        u.email AS driver_email,
+        u.first_name,
+        u.last_name,
+        p.org_id,
+        so.org_name,
+        COUNT(DISTINCT p.purchase_id) AS purchase_count,
+        COALESCE(SUM(pi.quantity), 0) AS total_items,
+        COALESCE(SUM(pi.points_cost), 0) AS total_points_spent
+      FROM PURCHASES p
+      JOIN USERS u ON u.user_id = p.user_id
+      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = p.org_id
+      LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
+      GROUP BY p.user_id, u.email, u.first_name, u.last_name, p.org_id, so.org_name
+      ORDER BY total_points_spent DESC, p.user_id ASC;
+    `);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/reports/audit-log", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query(`
+      SELECT
+        action_type,
+        entity_type,
+        COUNT(*) AS event_count,
+        MAX(time_done) AS latest_event
+      FROM AUDITLOG
+      GROUP BY action_type, entity_type
+      ORDER BY latest_event DESC, event_count DESC;
+    `);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/reports/top-drivers", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor organization not found" });
+    const [rows] = await pool.query(`
+      SELECT
+        driver_user_id,
+        driver_email,
+        first_name,
+        last_name,
+        driver_status,
+        points_earned_total,
+        points_redeemed_total,
+        net_points
+      FROM vw_sponsor_top_drivers_by_points_earned
+      WHERE org_id = ?
+      ORDER BY net_points DESC, points_earned_total DESC, driver_user_id ASC;
+    `, [orgId]);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/reports/purchase-summary", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor organization not found" });
+    const [rows] = await pool.query(`
+      SELECT
+        p.purchase_id,
+        p.user_id AS driver_user_id,
+        u.email AS driver_email,
+        u.first_name,
+        u.last_name,
+        p.purchase_status,
+        p.created_by_user_id,
+        p.created_at,
+        p.updated_at,
+        COALESCE(SUM(pi.quantity), 0) AS total_items,
+        COALESCE(SUM(pi.points_cost), 0) AS total_points_spent
+      FROM PURCHASES p
+      JOIN USERS u ON u.user_id = p.user_id
+      LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
+      WHERE p.org_id = ?
+      GROUP BY p.purchase_id, p.user_id, u.email, u.first_name, u.last_name, p.purchase_status, p.created_by_user_id, p.created_at, p.updated_at
+      ORDER BY p.created_at DESC, p.purchase_id DESC;
+    `, [orgId]);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/sponsor/reports/invoice-summary", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+    if (!orgId) return res.status(404).json({ error: "Sponsor organization not found" });
+    const [rows] = await pool.query(`
+      SELECT
+        so.org_id,
+        so.org_name,
+        COUNT(DISTINCT p.purchase_id) AS purchase_count,
+        COALESCE(SUM(pi.quantity), 0) AS total_items,
+        COALESCE(SUM(pi.points_cost), 0) AS total_points_redeemed,
+        COALESCE(SUM(CASE WHEN p.purchase_status = 'CANCELLED' THEN pi.points_cost ELSE 0 END), 0) AS cancelled_points,
+        COALESCE(SUM(CASE WHEN p.purchase_status <> 'CANCELLED' THEN pi.points_cost ELSE 0 END), 0) AS net_points_redeemed
+      FROM SPONSORORGANIZATION so
+      LEFT JOIN PURCHASES p ON p.org_id = so.org_id
+      LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
+      WHERE so.org_id = ?
+      GROUP BY so.org_id, so.org_name;
+    `, [orgId]);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
 app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "public", "about.html")));

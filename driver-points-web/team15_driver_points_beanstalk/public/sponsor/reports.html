@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Admin Reports</title>
+  <title>Sponsor Reports</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -11,28 +11,26 @@
     <div class="nav">
       <div class="brand">
         <a href="/dashboard" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
-        <span class="pill">Admin</span>
+        <span class="pill">Sponsor</span>
       </div>
       <div class="navlinks">
-        <a class="btn ghost" href="/admin/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/sponsor/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/sponsor/purchases.html">Purchases</a>
         <a class="btn ghost" href="/change-password.html">Change Password</a>
         <button class="btn" id="logoutBtn">Logout</button>
       </div>
     </div>
 
     <div class="card">
-      <h2 style="margin:0 0 6px">Admin Reports</h2>
-      <p class="sub">These reports satisfy the "generate admin reports" requirement. Use filters in your DB queries later if needed.</p>
-
+      <h2 style="margin:0 0 6px">Sponsor Reports</h2>
+      <p class="sub">Read-only sponsor reports built on top of your existing balances, transactions, purchases, and summary views.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
-        <button class="btn" data-r="users">Users by Role</button>
-        <button class="btn" data-r="drivers">Drivers</button>
-        <button class="btn" data-r="points">Points Summary</button>
-        <button class="btn" data-r="sales-sponsor">Sales by Sponsor</button>
-        <button class="btn" data-r="sales-driver">Sales by Driver</button>
-        <button class="btn" data-r="audit">Audit Summary</button>
+        <button class="btn" data-r="balances">Driver Balances</button>
+        <button class="btn" data-r="transactions">Point Transactions</button>
+        <button class="btn" data-r="top-drivers">Top Drivers</button>
+        <button class="btn" data-r="purchases">Purchase Summary</button>
+        <button class="btn" data-r="invoice">Invoice Summary</button>
       </div>
-
       <div class="msg" id="msg" style="margin-top:10px"></div>
     </div>
 
@@ -72,8 +70,9 @@
     async function init(){
       const me = await Team15.loadMe();
       if(!me) return window.location.href='/login.html';
-      if(me.role !== 'admin') return window.location.href=`/${me.role}/dashboard.html`;
+      if(me.role !== 'sponsor') return window.location.href=`/${me.role}/dashboard.html`;
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
     }
 
     document.addEventListener('click', async (e)=>{
@@ -82,36 +81,29 @@
       msg.textContent = '';
       const r = btn.getAttribute('data-r');
       try{
-        if(r==='users'){
-          title.textContent = 'Users by Role';
-          const data = await Team15.api('/api/admin/reports/users-by-role', {method:'GET'});
+        if(r==='balances'){
+          title.textContent = 'Driver Balances';
+          const data = await Team15.api('/api/sponsor/driver-balances', {method:'GET'});
+          renderTable(data.drivers);
+        }
+        if(r==='transactions'){
+          title.textContent = 'Point Transactions';
+          const data = await Team15.api('/api/sponsor/driver-point-transactions', {method:'GET'});
+          renderTable(data.transactions);
+        }
+        if(r==='top-drivers'){
+          title.textContent = 'Top Drivers';
+          const data = await Team15.api('/api/sponsor/reports/top-drivers', {method:'GET'});
           renderTable(data.rows);
         }
-        if(r==='drivers'){
-          title.textContent = 'Drivers';
-          const data = await Team15.api('/api/admin/reports/drivers', {method:'GET'});
+        if(r==='purchases'){
+          title.textContent = 'Purchase Summary';
+          const data = await Team15.api('/api/sponsor/reports/purchase-summary', {method:'GET'});
           renderTable(data.rows);
         }
-        if(r==='points'){
-          title.textContent = 'Points Summary (balances + totals)';
-          const data = await Team15.api('/api/admin/reports/points', {method:'GET'});
-          // show balances if available, else totals
-          const rows = (data.balances && data.balances.length) ? data.balances : data.totals;
-          renderTable(rows);
-        }
-        if(r==='sales-sponsor'){
-          title.textContent = 'Sales by Sponsor';
-          const data = await Team15.api('/api/admin/reports/sales-by-sponsor', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='sales-driver'){
-          title.textContent = 'Sales by Driver';
-          const data = await Team15.api('/api/admin/reports/sales-by-driver', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='audit'){
-          title.textContent = 'Audit Summary';
-          const data = await Team15.api('/api/admin/reports/audit-log', {method:'GET'});
+        if(r==='invoice'){
+          title.textContent = 'Invoice Summary';
+          const data = await Team15.api('/api/sponsor/reports/invoice-summary', {method:'GET'});
           renderTable(data.rows);
         }
       }catch(err){
