@@ -1503,24 +1503,28 @@ app.post("/api/driver/applications", requireRole("driver"), async (req, res) => 
       "SELECT org_id, org_name, org_status FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
       [orgId]
     );
-    if (!orgRows.length) return res.status(404).json({ error: "Sponsor organization not found" });
+
+    if (!orgRows.length) {
+      return res.status(404).json({ error: "Sponsor organization not found" });
+    }
+
     if (String(orgRows[0].org_status).toLowerCase() !== "active") {
       return res.status(400).json({ error: "Sponsor organization is not active" });
     }
 
-    // Enforce: only one pending application at a time
-    const [pendingRows] = await pool.query(
-      `SELECT application_id
+    // Enforce: do not allow duplicate application to the same sponsor org
+    const [existingRows] = await pool.query(
+      `SELECT application_id, application_status
        FROM DRIVERAPPLICATIONS
        WHERE user_id = ?
-         AND application_status = 'PENDING'
-       ORDER BY application_date DESC, application_id DESC
+         AND org_id = ?
        LIMIT 1`,
-      [userId]
+      [userId, orgId]
     );
-    if (pendingRows.length) {
+
+    if (existingRows.length) {
       return res.status(409).json({
-        error: "You already have a pending application. Withdraw it before applying to a different sponsor."
+        error: "You have already applied to this sponsor organization."
       });
     }
 
@@ -1537,22 +1541,41 @@ app.post("/api/driver/applications", requireRole("driver"), async (req, res) => 
 
     // Audit log
     await pool.query(
-      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
-      ["SUBMIT_APPLICATION", "DRIVERAPPLICATION", applicationId, userId, JSON.stringify({ org_id: orgId })]
+      `INSERT INTO AUDITLOG
+        (action_type, entity_type, entity_id, actor_user_id, details)
+       VALUES
+        (?, ?, ?, ?, ?)`,
+      [
+        "SUBMIT_APPLICATION",
+        "DRIVERAPPLICATION",
+        applicationId,
+        userId,
+        JSON.stringify({ org_id: orgId })
+      ]
     );
 
-    // Notify sponsor users (optional but recommended)
+    // Notify sponsor users
     const [sponsorUsers] = await pool.query(
       "SELECT user_id FROM SPONSORUSERS WHERE org_id = ?",
       [orgId]
     );
+
     const orgName = orgRows[0].org_name || "your organization";
     const noteMsg = `A driver submitted a new application for ${orgName}. (application_id: ${applicationId})`;
 
     for (const su of sponsorUsers) {
       await pool.query(
-        "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
-        [su.user_id, "APPLICATION_SUBMITTED", noteMsg, "DRIVERAPPLICATION", applicationId]
+        `INSERT INTO NOTIFICATIONS
+          (user_id, notification_type, message, entity_type, entity_id)
+         VALUES
+          (?, ?, ?, ?, ?)`,
+        [
+          su.user_id,
+          "APPLICATION_SUBMITTED",
+          noteMsg,
+          "DRIVERAPPLICATION",
+          applicationId
+        ]
       );
     }
 
