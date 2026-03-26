@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sponsor Notifications</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .notification-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .notification-table thead {
+      background-color: #f5f5f5;
+    }
+
+    .notification-table th,
+    .notification-table td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .notification-table tbody tr:hover {
+      background-color: #fafafa;
+    }
+
+    .notification-type {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      background-color: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .notification-type.withdrawal {
+      background-color: #fff3e0;
+      color: #f57c00;
+    }
+
+    .notification-type.application {
+      background-color: #f3e5f5;
+      color: #7b1fa2;
+    }
+
+    .notification-date {
+      color: #888;
+      font-size: 13px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #888;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/sponsor/dashboard.html" class="brand-logo">
+          <img src="/images/car-logo.png" alt="Driver Points" />
+        </a>
+        <span class="pill">Sponsor</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/sponsor/dashboard.html">Dashboard</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 6px">Notifications</h2>
+      <div class="small" id="subtitle">View all notifications for your organization</div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div class="msg" id="msg"></div>
+
+      <table class="notification-table" id="nTable" style="display:none">
+        <thead>
+          <tr>
+            <th>Date & Time</th>
+            <th>Type</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="nTableBody"></tbody>
+      </table>
+
+      <div id="emptyState" class="empty-state" style="display:none">
+        <div class="empty-state-icon">📭</div>
+        <div>No notifications yet</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const msg = Team15.qs("#msg");
+    const nTable = Team15.qs("#nTable");
+    const nTableBody = Team15.qs("#nTableBody");
+    const emptyState = Team15.qs("#emptyState");
+
+    function getNotificationTypeClass(type) {
+      const t = String(type || "").toUpperCase();
+      if (t.includes("WITHDRAWN")) return "withdrawal";
+      if (t.includes("APPLICATION")) return "application";
+      return "";
+    }
+
+    function getNotificationTypeLabel(type) {
+      const t = String(type || "").toUpperCase();
+      if (t === "APPLICATION_WITHDRAWN") return "Application Withdrawn";
+      if (t === "APPLICATION_SUBMITTED") return "Application Submitted";
+      if (t === "APPLICATION_APPROVED") return "Application Approved";
+      if (t === "APPLICATION_REJECTED") return "Application Rejected";
+      return t;
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return "";
+      const date = new Date(iso);
+      return date.toLocaleString();
+    }
+
+    function renderNotificationRow(n) {
+      const typeClass = getNotificationTypeClass(n.notification_type);
+      const typeLabel = getNotificationTypeLabel(n.notification_type);
+      return `
+        <tr>
+          <td class="notification-date">${fmtDate(n.created_at)}</td>
+          <td>
+            <span class="notification-type ${typeClass}">
+              ${typeLabel}
+            </span>
+          </td>
+          <td>${n.message || ""}</td>
+        </tr>
+      `;
+    }
+
+    async function loadNotifications() {
+      msg.textContent = "";
+      nTable.style.display = "none";
+      emptyState.style.display = "none";
+
+      try {
+        const data = await Team15.api("/api/sponsor/notifications", { method: "GET" });
+        const notes = data.notifications || [];
+
+        if (!notes.length) {
+          emptyState.style.display = "block";
+          return;
+        }
+
+        nTableBody.innerHTML = notes.map(renderNotificationRow).join("");
+        nTable.style.display = "table";
+      } catch (e) {
+        msg.textContent = "Error loading notifications: " + e.message;
+      }
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+
+      loadNotifications();
+    }
+
+    Team15.qs("#logoutBtn").addEventListener("click", async () => {
+      await Team15.api("/api/logout", { method: "POST" });
+      window.location.href = "/";
+    });
+
+    init();
+  </script>
+</body>
+</html>
