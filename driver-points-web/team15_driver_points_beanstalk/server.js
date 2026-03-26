@@ -1445,34 +1445,30 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
 });
 
 // ============================================
-// Driver: Get my most recent application/status
+// Driver: Get all my applications/statuses
 // ============================================
 app.get("/api/driver/application", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
     const userId = req.session.user.user_id;
 
-    // Get the most recent application for this driver (if multiple exist)
     const [rows] = await pool.query(
       `SELECT
          da.application_id,
          da.org_id,
          da.application_status,
+         da.is_active,
          da.application_date,
+         da.decision_reason,
          so.org_name
        FROM DRIVERAPPLICATIONS da
        LEFT JOIN SPONSORORGANIZATION so ON so.org_id = da.org_id
        WHERE da.user_id = ?
-       ORDER BY da.application_date DESC, da.application_id DESC
-       LIMIT 1`,
+       ORDER BY da.application_date DESC, da.application_id DESC`,
       [userId]
     );
 
-    if (!rows.length) {
-      return res.json({ ok: true, application: null });
-    }
-
-    return res.json({ ok: true, application: rows[0] });
+    return res.json({ ok: true, applications: rows });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
