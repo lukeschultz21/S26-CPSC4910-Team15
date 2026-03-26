@@ -1073,14 +1073,33 @@ app.get("/api/sponsor/driver-point-transactions", requireRole("sponsor"), async 
     const orgId = await getSponsorOrgId(pool, sponsorUserId);
     if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
 
-    const [rows] = await pool.query(
-      `SELECT *
-       FROM vw_sponsor_driver_point_transactions
-       WHERE org_id = ?
-       ORDER BY created_at DESC
-       LIMIT 200`,
-      [orgId]
-    );
+    const { driver_user_id, startDate, endDate } = req.query;
+
+    let query = `
+      SELECT *
+      FROM vw_sponsor_driver_point_transactions
+      WHERE org_id = ?
+    `;
+    const params = [orgId];
+
+    if (driver_user_id) {
+      query += " AND driver_user_id = ?";
+      params.push(Number(driver_user_id));
+    }
+
+    if (startDate) {
+      query += " AND created_at >= ?";
+      params.push(startDate);
+    }
+
+    if (endDate) {
+      query += " AND created_at <= ?";
+      params.push(endDate + " 23:59:59");
+    }
+
+    query += " ORDER BY created_at DESC LIMIT 200";
+
+    const [rows] = await pool.query(query, params);
 
     res.json({ ok: true, org_id: orgId, transactions: rows });
   } catch (e) {
