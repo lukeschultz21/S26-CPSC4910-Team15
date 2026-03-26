@@ -1323,24 +1323,35 @@ app.put("/api/sponsor/drop-driver", requireRole("sponsor"), async (req, res) => 
   }
 });
 
+// ============================================
+// Fix pending applications to scope by org
+// ============================================
 app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
+    const sponsorUserId = req.session.user.user_id;
+
+    // Get sponsor's org_id
+    const orgId = await getSponsorOrgId(pool, sponsorUserId);
+    if (!orgId) return res.status(404).json({ error: "Sponsor organization not found" });
+
     const [rows] = await pool.query(
       `SELECT 
-        da.application_id,
-        da.user_id,
-        da.org_id,
-        da.application_status,
-        da.application_date,
-        u.email,
-        u.first_name,
-        u.last_name
+         da.application_id,
+         da.user_id,
+         da.org_id,
+         da.application_status,
+         da.application_date,
+         u.email,
+         u.first_name,
+         u.last_name
        FROM DRIVERAPPLICATIONS da
        JOIN USERS u ON u.user_id = da.user_id
        WHERE da.application_status = 'PENDING'
+         AND da.org_id = ?
        ORDER BY da.application_date DESC
-       LIMIT 50`
+       LIMIT 50`,
+      [orgId]
     );
     res.json({ ok: true, applications: rows });
   } catch (e) {
@@ -1348,6 +1359,9 @@ app.get("/api/sponsor/pending-applications", requireRole("sponsor"), async (req,
   }
 });
 
+// ============================================
+// Guard reject-application endpoint
+// ============================================
 app.put("/api/sponsor/reject-application", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
@@ -1374,6 +1388,12 @@ app.put("/api/sponsor/reject-application", requireRole("sponsor"), async (req, r
 
     const application = appRows[0];
 
+    // Verify sponsor owns this org (authorization check)
+    const sponsorOrgId = await getSponsorOrgId(pool, actorUserId);
+    if (!sponsorOrgId || Number(sponsorOrgId) !== Number(application.org_id)) {
+      return res.status(403).json({ error: "You can only reject applications for your organization" });
+    }
+
     // Update application status to REJECTED
     await pool.query(
       "UPDATE DRIVERAPPLICATIONS SET application_status = 'REJECTED' WHERE application_id = ?",
@@ -1398,6 +1418,9 @@ app.put("/api/sponsor/reject-application", requireRole("sponsor"), async (req, r
   }
 });
 
+// ============================================
+// Guard approve-application endpoint
+// ============================================
 app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
@@ -1420,6 +1443,12 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
 
     const application = appRows[0];
 
+    // Verify sponsor owns this org (authorization check)
+    const sponsorOrgId = await getSponsorOrgId(pool, actorUserId);
+    if (!sponsorOrgId || Number(sponsorOrgId) !== Number(application.org_id)) {
+      return res.status(403).json({ error: "You can only approve applications for your organization" });
+    }
+
     // Update application status to APPROVED
     await pool.query(
       "UPDATE DRIVERAPPLICATIONS SET application_status = 'APPROVED' WHERE application_id = ?",
@@ -1439,6 +1468,36 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
     );
 
     res.json({ ok: true, message: "Application approved successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// Sponsor notifications API
+// ============================================
+app.get("/api/sponsor/notifications", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    const [rows] = await pool.query(
+      `SELECT
+         notification_id,
+         notification_type,
+         message,
+         is_read,
+         created_at,
+         entity_type,
+         entity_id
+       FROM vw_user_notifications
+       WHERE user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 200`,
+      [userId]
+    );
+
+    res.json({ ok: true, notifications: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
