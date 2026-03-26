@@ -103,7 +103,6 @@ CREATE TABLE DRIVERAPPLICATIONS (
   application_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   decision_reason VARCHAR(225),
   UNIQUE KEY uq_driver_org_application (user_id, org_id),
-  UNIQUE KEY uq_driver_one_active_app (user_id, is_active),
 
   FOREIGN KEY (user_id) REFERENCES USERS(user_id),
   FOREIGN KEY (org_id) REFERENCES SPONSORORGANIZATION(org_id)
