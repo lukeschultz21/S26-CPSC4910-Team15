@@ -43,6 +43,507 @@ try {
 // Multer upload config (stores files in /public/uploads)
 const upload = multer({ dest: uploadsDir });
 
+// Bulk upload helpers
+function generateTempPassword() {
+  return `Temp${Math.random().toString(36).slice(-8)}!1a`;
+}
+
+function safeTrim(value) {
+  return String(value == null ? "" : value).trim();
+}
+
+function usernameFromEmail(email) {
+  const base = safeTrim(email).split("@")[0] || `user${Date.now()}`;
+  return base.slice(0, 50);
+}
+
+function parseOptionalPoints(rawPoints) {
+  const value = safeTrim(rawPoints);
+  if (value === "") return null;
+  if (!/^-?\d+$/.test(value)) return NaN;
+  return Number(value);
+}
+
+function splitBulkLine(line) {
+  const parts = String(line).replace(/\r$/, "").split("|");
+  while (parts.length < 7) parts.push("");
+  return parts.slice(0, 7).map((part) => safeTrim(part));
+}
+
+async function getOrgByName(conn, orgName) {
+  const [rows] = await conn.query(
+    `SELECT org_id, org_name, cents_per_point, org_status
+     FROM SPONSORORGANIZATION
+     WHERE LOWER(org_name) = LOWER(?)
+     LIMIT 1`,
+    [orgName]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+async function createOrganization(conn, orgName, actorUserId) {
+  const existing = await getOrgByName(conn, orgName);
+  if (existing) return { org: existing, created: false };
+
+  const [result] = await conn.query(
+    `INSERT INTO SPONSORORGANIZATION (org_name, cents_per_point, org_status, created_at)
+     VALUES (?, 1, 'active', NOW())`,
+    [orgName]
+  );
+
+  const org = {
+    org_id: result.insertId,
+    org_name: orgName,
+    cents_per_point: 1,
+    org_status: "active"
+  };
+
+  try {
+    await conn.query(
+      `INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details)
+       VALUES (?, ?, ?, ?, ?)`,
+      ["BULK_CREATE_ORG", "SPONSORORGANIZATION", org.org_id, actorUserId || null, JSON.stringify({ org_name: orgName })]
+    );
+  } catch (_) {
+    // ignore audit failures to avoid blocking upload
+  }
+
+  return { org, created: true };
+}
+
+async function findUserByEmail(conn, email) {
+  const [rows] = await conn.query(
+    `SELECT user_id, email, username, first_name, last_name, status
+     FROM USERS
+     WHERE LOWER(email) = LOWER(?)
+     LIMIT 1`,
+    [email]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+async function createBasicUser(conn, { email, firstName, lastName }) {
+  const tempPassword = generateTempPassword();
+  const hash = await bcrypt.hash(tempPassword, 10);
+  const [result] = await conn.query(
+    `INSERT INTO USERS
+      (email, password_hash, first_name, last_name, username, status, created_at)
+     VALUES
+      (?, ?, ?, ?, ?, 'active', NOW())`,
+    [
+      email,
+      hash,
+      firstName || null,
+      lastName || null,
+      usernameFromEmail(email)
+    ]
+  );
+  return {
+    user_id: result.insertId,
+    email,
+    first_name: firstName || null,
+    last_name: lastName || null,
+    temp_password: tempPassword,
+    created: true
+  };
+}
+
+async function ensureUserForBulkLoad(conn, { email, firstName, lastName }) {
+  const existing = await findUserByEmail(conn, email);
+  if (existing) {
+    return { user: existing, created: false, tempPassword: null };
+  }
+  const created = await createBasicUser(conn, { email, firstName, lastName });
+  return {
+    user: created,
+    created: true,
+    tempPassword: created.temp_password
+  };
+}
+
+async function ensureSponsorMembership(conn, { userId, orgId }) {
+  const [rows] = await conn.query(
+    `SELECT user_id, org_id
+     FROM SPONSORUSERS
+     WHERE user_id = ?
+     LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) {
+    await conn.query(
+      `INSERT INTO SPONSORUSERS (user_id, org_id)
+       VALUES (?, ?)`,
+      [userId, orgId]
+    );
+    return { created: true, moved: false };
+  }
+
+  if (Number(rows[0].org_id) !== Number(orgId)) {
+    await conn.query(
+      `UPDATE SPONSORUSERS
+       SET org_id = ?
+       WHERE user_id = ?`,
+      [orgId, userId]
+    );
+    return { created: false, moved: true };
+  }
+
+  return { created: false, moved: false };
+}
+
+async function ensureDriverMembership(conn, { userId, orgId, allowMove = false, actorUserId = null }) {
+  const [rows] = await conn.query(
+    `SELECT user_id, org_id, driver_status
+     FROM DRIVERS
+     WHERE user_id = ?
+     LIMIT 1`,
+    [userId]
+  );
+
+  if (!rows.length) {
+    await conn.query(
+      `INSERT INTO DRIVERS (user_id, org_id, driver_status)
+       VALUES (?, ?, 'active')`,
+      [userId, orgId]
+    );
+    await setDriverPointsBalance(conn, userId, orgId, 0);
+    await ensureDriverSponsorMembership(conn, { userId, orgId, status: "APPROVED", actorUserId });
+    return { created: true, moved: false, previousOrgId: null };
+  }
+
+  const currentOrgId = rows[0].org_id == null ? null : Number(rows[0].org_id);
+  const needsMove = currentOrgId !== null && Number(currentOrgId) !== Number(orgId);
+
+  if (needsMove && !allowMove) {
+    await ensureDriverSponsorMembership(conn, { userId, orgId, status: "APPROVED", actorUserId });
+    if (String(rows[0].driver_status || "").toLowerCase() !== "active") {
+      await conn.query(`UPDATE DRIVERS SET driver_status = 'active' WHERE user_id = ?`, [userId]);
+    }
+    await setDriverPointsBalance(conn, userId, orgId, await getDriverPointsBalance(conn, userId, orgId));
+    return { created: false, moved: false, previousOrgId: currentOrgId, multiSponsorAdded: true };
+  }
+
+  if (needsMove && allowMove) {
+    await conn.query(
+      `UPDATE DRIVERS
+       SET org_id = ?, driver_status = 'active'
+       WHERE user_id = ?`,
+      [orgId, userId]
+    );
+  } else if (String(rows[0].driver_status || "").toLowerCase() !== "active") {
+    await conn.query(`UPDATE DRIVERS SET driver_status = 'active' WHERE user_id = ?`, [userId]);
+  }
+
+  await ensureDriverSponsorMembership(conn, { userId, orgId, status: "APPROVED", actorUserId });
+  await setDriverPointsBalance(conn, userId, orgId, await getDriverPointsBalance(conn, userId, orgId));
+  return { created: false, moved: Boolean(needsMove && allowMove), previousOrgId: currentOrgId };
+}
+
+async function applyDriverPoints(conn, { userId, orgId, points, reason, actorUserId }) {
+  if (!points) {
+    return { oldPoints: null, newPoints: null, pointsApplied: 0 };
+  }
+
+  const oldPoints = await getDriverPointsBalance(conn, userId, orgId);
+  const newPoints = oldPoints + Number(points);
+
+  if (newPoints < 0) {
+    const err = new Error("Insufficient points to apply this adjustment");
+    err.code = "NEGATIVE_BALANCE";
+    throw err;
+  }
+
+  await setDriverPointsBalance(conn, userId, orgId, newPoints);
+
+  await conn.query(
+    `INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, orgId, Number(points), reason, actorUserId || null]
+  );
+
+  try {
+    const actionWord = Number(points) >= 0 ? "added" : "deducted";
+    await createNotification(
+      conn,
+      userId,
+      "POINT_CHANGE",
+      `${Math.abs(Number(points))} points were ${actionWord} to your account. Reason: ${reason}`,
+      "POINT_TRANSACTION",
+      null
+    );
+  } catch (_) {
+    // ignore notification issues
+  }
+
+  return { oldPoints, newPoints, pointsApplied: Number(points) };
+}
+
+async function processBulkLoadLine(conn, context, rawLine, lineNumber) {
+  const result = {
+    line_number: lineNumber,
+    raw: rawLine,
+    status: "success",
+    type: null,
+    action: "",
+    warnings: [],
+    errors: [],
+    created_accounts: []
+  };
+
+  const trimmed = String(rawLine || "").trim();
+  if (!trimmed) {
+    result.status = "skipped";
+    result.action = "Blank line skipped";
+    return result;
+  }
+
+  const [typeRaw, orgNameRaw, firstNameRaw, lastNameRaw, emailRaw, pointsRaw, reasonRaw] = splitBulkLine(rawLine);
+  const type = safeTrim(typeRaw).toUpperCase();
+  result.type = type;
+
+  if (!["O", "D", "S"].includes(type)) {
+    result.status = "error";
+    result.errors.push("Type must be O, D, or S");
+    return result;
+  }
+
+  if (type === "O") {
+    if (context.mode !== "admin") {
+      result.status = "error";
+      result.errors.push('Sponsor uploads cannot use the "O" type');
+      return result;
+    }
+
+    const orgName = safeTrim(orgNameRaw);
+    if (!orgName) {
+      result.status = "error";
+      result.errors.push("Organization name is required for O records");
+      return result;
+    }
+
+    const { org, created } = await createOrganization(conn, orgName, context.actorUserId);
+    result.action = created ? `Created organization ${org.org_name}` : `Organization ${org.org_name} already exists`;
+    return result;
+  }
+
+  const firstName = safeTrim(firstNameRaw);
+  const lastName = safeTrim(lastNameRaw);
+  const email = safeTrim(emailRaw).toLowerCase();
+  const reason = safeTrim(reasonRaw);
+  const parsedPoints = parseOptionalPoints(pointsRaw);
+
+  if (!email) {
+    result.status = "error";
+    result.errors.push("Email address is required");
+    return result;
+  }
+  if (!firstName) {
+    result.status = "error";
+    result.errors.push("First name is required");
+    return result;
+  }
+  if (!lastName) {
+    result.status = "error";
+    result.errors.push("Last name is required");
+    return result;
+  }
+  if (Number.isNaN(parsedPoints)) {
+    result.status = "error";
+    result.errors.push("Points must be a whole number when provided");
+    return result;
+  }
+  if (parsedPoints !== null && !reason) {
+    result.status = "error";
+    result.errors.push("Reason is required when points are provided");
+    return result;
+  }
+
+  let org;
+  if (context.mode === "sponsor") {
+    org = context.sponsorOrg;
+    if (safeTrim(orgNameRaw)) {
+      result.warnings.push("Organization field is ignored for sponsor uploads");
+    }
+  } else {
+    const orgName = safeTrim(orgNameRaw);
+    if (!orgName) {
+      result.status = "error";
+      result.errors.push("Organization name is required for admin D and S records");
+      return result;
+    }
+    org = await getOrgByName(conn, orgName);
+    if (!org) {
+      result.status = "error";
+      result.errors.push(`Organization \"${orgName}\" does not exist yet`);
+      return result;
+    }
+  }
+
+  if (!org || !org.org_id) {
+    result.status = "error";
+    result.errors.push("Unable to determine target organization");
+    return result;
+  }
+
+  const ensured = await ensureUserForBulkLoad(conn, { email, firstName, lastName });
+  const userId = Number(ensured.user.user_id);
+  if (ensured.created && ensured.tempPassword) {
+    result.created_accounts.push({ email, temp_password: ensured.tempPassword, role: type === "D" ? "driver" : "sponsor", org_name: org.org_name });
+  }
+
+  if (type === "S") {
+    if (parsedPoints !== null || reason) {
+      result.warnings.push("Points and reason fields are ignored for sponsor records");
+    }
+
+    const sponsorMembership = await ensureSponsorMembership(conn, { userId, orgId: org.org_id });
+    const sponsorActions = [];
+    if (ensured.created) sponsorActions.push("created user");
+    if (sponsorMembership.created) sponsorActions.push("created sponsor role");
+    if (sponsorMembership.moved) sponsorActions.push("updated sponsor organization");
+    if (!sponsorActions.length) sponsorActions.push("sponsor already existed");
+    result.action = `${sponsorActions.join(", ")} for ${email}`;
+    return result;
+  }
+
+  const membership = await ensureDriverMembership(conn, {
+    userId,
+    orgId: org.org_id,
+    allowMove: context.mode === "admin"
+  });
+
+  const pointsResult = await applyDriverPoints(conn, {
+    userId,
+    orgId: org.org_id,
+    points: parsedPoints,
+    reason: reason || null,
+    actorUserId: context.actorUserId
+  });
+
+  const driverActions = [];
+  if (ensured.created) driverActions.push("created user");
+  if (membership.created) driverActions.push("created driver");
+  if (membership.moved) driverActions.push(context.mode === "admin" ? "reassigned driver organization" : "updated driver organization");
+  if (!membership.created && !membership.moved) driverActions.push("driver already existed");
+  if (parsedPoints !== null) driverActions.push(`applied ${parsedPoints} points`);
+  result.action = `${driverActions.join(", ")} for ${email}`;
+  result.points_applied = pointsResult.pointsApplied;
+  return result;
+}
+
+async function processBulkLoadUpload({ req, mode }) {
+  if (!req.file) {
+    const err = new Error("No file uploaded");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const fileText = fs.readFileSync(req.file.path, "utf8");
+  const lines = fileText.split(/\n/);
+  const conn = await getPool().getConnection();
+
+  try {
+    const context = {
+      mode,
+      actorUserId: req.session.user.user_id,
+      sponsorOrg: null
+    };
+
+    if (mode === "sponsor") {
+      const sponsorOrgId = await getSponsorOrgId(conn, req.session.user.user_id);
+      if (!sponsorOrgId) {
+        const err = new Error("Sponsor organization not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      const [orgRows] = await conn.query(
+        `SELECT org_id, org_name, cents_per_point, org_status
+         FROM SPONSORORGANIZATION
+         WHERE org_id = ?
+         LIMIT 1`,
+        [sponsorOrgId]
+      );
+      if (!orgRows.length) {
+        const err = new Error("Sponsor organization not found");
+        err.statusCode = 404;
+        throw err;
+      }
+      context.sponsorOrg = orgRows[0];
+    }
+
+    const results = [];
+    const createdAccounts = [];
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const lineNumber = i + 1;
+      const rawLine = lines[i];
+
+      await conn.beginTransaction();
+      try {
+        const lineResult = await processBulkLoadLine(conn, context, rawLine, lineNumber);
+        if (Array.isArray(lineResult.created_accounts) && lineResult.created_accounts.length) {
+          createdAccounts.push(...lineResult.created_accounts);
+        }
+        results.push(lineResult);
+        await conn.commit();
+      } catch (lineError) {
+        try { await conn.rollback(); } catch (_) {}
+        results.push({
+          line_number: lineNumber,
+          raw: rawLine,
+          status: "error",
+          type: splitBulkLine(rawLine)[0]?.toUpperCase?.() || null,
+          action: "",
+          warnings: [],
+          errors: [lineError.message],
+          created_accounts: []
+        });
+      }
+    }
+
+    try {
+      await conn.query(
+        `INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          mode === "admin" ? "ADMIN_BULK_LOAD" : "SPONSOR_BULK_LOAD",
+          "BULK_UPLOAD",
+          null,
+          req.session.user.user_id,
+          JSON.stringify({
+            total_lines: results.length,
+            successful_lines: results.filter((r) => r.status === "success").length,
+            warning_lines: results.filter((r) => r.warnings && r.warnings.length).length,
+            error_lines: results.filter((r) => r.status === "error").length
+          })
+        ]
+      );
+    } catch (_) {
+      // ignore audit failure
+    }
+
+    return {
+      ok: true,
+      summary: {
+        total_lines: results.length,
+        successful_lines: results.filter((r) => r.status === "success").length,
+        skipped_lines: results.filter((r) => r.status === "skipped").length,
+        error_lines: results.filter((r) => r.status === "error").length,
+        warning_lines: results.filter((r) => r.warnings && r.warnings.length).length
+      },
+      results,
+      created_accounts: createdAccounts
+    };
+  } finally {
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (_) {
+      // ignore
+    }
+    conn.release();
+  }
+}
+
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.status(401).json({ error: "Not logged in" });
   next();
@@ -262,9 +763,132 @@ async function getOrgCentsPerPoint(pool, orgId) {
   return rows.length ? Number(rows[0].cents_per_point || 1) : 1;
 }
 
-async function getDriverOrgId(pool, userId) {
-  const [rows] = await pool.query("SELECT org_id FROM DRIVERS WHERE user_id = ? LIMIT 1", [userId]);
-  return rows.length ? Number(rows[0].org_id) : null;
+async function getDriverSponsorMemberships(pool, userId, statuses = ["APPROVED"]) {
+  const normalized = (Array.isArray(statuses) ? statuses : [statuses]).map((s) => String(s || "").toUpperCase()).filter(Boolean);
+  const statusSql = normalized.length ? `AND ds.sponsorship_status IN (${normalized.map(() => "?").join(", ")})` : "";
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT ds.user_id, ds.org_id, ds.sponsorship_status, ds.applied_at, ds.decided_at, ds.decision_reason,
+              so.org_name, so.cents_per_point, so.org_status
+       FROM DRIVER_SPONSORS ds
+       JOIN SPONSORORGANIZATION so ON so.org_id = ds.org_id
+       WHERE ds.user_id = ? ${statusSql}
+       ORDER BY so.org_name ASC, ds.org_id ASC`,
+      [userId, ...normalized]
+    );
+    return rows;
+  } catch (e) {
+    const [rows] = await pool.query(
+      `SELECT d.user_id, d.org_id, 'APPROVED' AS sponsorship_status, NULL AS applied_at, NULL AS decided_at, NULL AS decision_reason,
+              so.org_name, so.cents_per_point, so.org_status
+       FROM DRIVERS d
+       JOIN SPONSORORGANIZATION so ON so.org_id = d.org_id
+       WHERE d.user_id = ? ${normalized.length && !normalized.includes("APPROVED") ? "AND 1=0" : ""}
+       ORDER BY so.org_name ASC, d.org_id ASC`,
+      [userId]
+    );
+    return rows;
+  }
+}
+
+async function getDriverSelectedOrgId(pool, reqOrUserId, preferredOrgId = null) {
+  const userId = typeof reqOrUserId === "object" ? reqOrUserId.session.user.user_id : reqOrUserId;
+  const req = typeof reqOrUserId === "object" ? reqOrUserId : null;
+  const memberships = await getDriverSponsorMemberships(pool, userId, ["APPROVED"]);
+  if (!memberships.length) return null;
+
+  const selectedFromSession = req?.session?.selected_driver_org_id != null ? Number(req.session.selected_driver_org_id) : null;
+  const preferred = preferredOrgId != null ? Number(preferredOrgId) : selectedFromSession;
+  let selected = memberships.find((m) => Number(m.org_id) === Number(preferred));
+  if (!selected) selected = memberships[0];
+
+  if (req) req.session.selected_driver_org_id = Number(selected.org_id);
+  return Number(selected.org_id);
+}
+
+async function getDriverOrgId(pool, userId, req = null) {
+  return getDriverSelectedOrgId(pool, req || userId);
+}
+
+async function getDriverPointsBalance(pool, userId, orgId = null) {
+  if (orgId != null) {
+    try {
+      const [[row]] = await pool.query(
+        `SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? AND org_id = ? LIMIT 1`,
+        [userId, orgId]
+      );
+      return Number(row?.current_points || 0);
+    } catch (e) {
+      const [[row]] = await pool.query(
+        `SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? LIMIT 1`,
+        [userId]
+      );
+      return Number(row?.current_points || 0);
+    }
+  }
+
+  const [rows] = await pool.query(
+    `SELECT COALESCE(SUM(current_points), 0) AS current_points FROM DRIVERPOINTBALANCES WHERE user_id = ?`,
+    [userId]
+  );
+  return Number(rows?.[0]?.current_points || 0);
+}
+
+async function setDriverPointsBalance(conn, userId, orgId, newPoints) {
+  try {
+    await conn.query(
+      `INSERT INTO DRIVERPOINTBALANCES (user_id, org_id, current_points)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE current_points = VALUES(current_points)`,
+      [userId, orgId, newPoints]
+    );
+  } catch (e) {
+    await conn.query(
+      `INSERT INTO DRIVERPOINTBALANCES (user_id, current_points)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE current_points = VALUES(current_points)`,
+      [userId, newPoints]
+    );
+  }
+}
+
+async function ensureDriverSponsorMembership(conn, { userId, orgId, status = "APPROVED", actorUserId = null, decisionReason = null }) {
+  try {
+    const [rows] = await conn.query(
+      `SELECT user_id, org_id, sponsorship_status
+       FROM DRIVER_SPONSORS
+       WHERE user_id = ? AND org_id = ?
+       LIMIT 1`,
+      [userId, orgId]
+    );
+
+    if (!rows.length) {
+      await conn.query(
+        `INSERT INTO DRIVER_SPONSORS
+          (user_id, org_id, sponsorship_status, assigned_by_user_id, applied_at, decided_at, decision_reason)
+         VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
+        [userId, orgId, status, actorUserId, status === "PENDING" ? null : new Date(), decisionReason]
+      );
+      return { created: true, updated: false, previousStatus: null };
+    }
+
+    const previousStatus = String(rows[0].sponsorship_status || "").toUpperCase();
+    if (previousStatus !== String(status).toUpperCase()) {
+      await conn.query(
+        `UPDATE DRIVER_SPONSORS
+         SET sponsorship_status = ?, assigned_by_user_id = COALESCE(?, assigned_by_user_id),
+             decided_at = ?, decision_reason = ?
+         WHERE user_id = ? AND org_id = ?`,
+        [status, actorUserId, status === "PENDING" ? null : new Date(), decisionReason, userId, orgId]
+      );
+      return { created: false, updated: true, previousStatus };
+    }
+
+    return { created: false, updated: false, previousStatus };
+  } catch (e) {
+    return { created: false, updated: false, previousStatus: null, fallback: true };
+  }
 }
 
 async function createNotification(db, userId, notificationType, message, entityType = null, entityId = null) {
@@ -359,6 +983,10 @@ app.get("/api/me", (req, res) => {
       role: req.session.impersonator.role,
       name: req.session.impersonator.name
     };
+  }
+
+  if (user.role === "driver") {
+    user.selected_org_id = req.session.selected_driver_org_id || null;
   }
 
   res.json({ user });
@@ -802,14 +1430,9 @@ app.get("/api/driver/points", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
     const userId = req.session.user.user_id;
-
-    // Calculate current balance from all transactions (positive + negative)
-    const [rows] = await pool.query(
-      "SELECT SUM(point_change) AS current_points FROM POINTTRANSACTIONS WHERE user_id = ?",
-      [userId]
-    );
-
-    res.json({ ok: true, current_points: (rows.length && rows[0].current_points) ? Number(rows[0].current_points) : 0 });
+    const orgId = await getDriverSelectedOrgId(pool, req);
+    const currentPoints = orgId ? await getDriverPointsBalance(pool, userId, orgId) : 0;
+    res.json({ ok: true, current_points: currentPoints, org_id: orgId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -819,11 +1442,20 @@ app.get("/api/driver/total-points", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
     const userId = req.session.user.user_id;
-    const [rows] = await pool.query(
-      "SELECT SUM(point_change) AS total_points FROM POINTTRANSACTIONS WHERE user_id = ? AND point_change > 0",
-      [userId]
-    );
-    res.json({ ok: true, total_points: rows.length ? Number(rows[0].total_points) : 0 });
+    const orgId = await getDriverSelectedOrgId(pool, req);
+    let rows;
+    if (orgId) {
+      [rows] = await pool.query(
+        "SELECT SUM(point_change) AS total_points FROM POINTTRANSACTIONS WHERE user_id = ? AND org_id = ? AND point_change > 0",
+        [userId, orgId]
+      );
+    } else {
+      [rows] = await pool.query(
+        "SELECT SUM(point_change) AS total_points FROM POINTTRANSACTIONS WHERE user_id = ? AND point_change > 0",
+        [userId]
+      );
+    }
+    res.json({ ok: true, total_points: Number(rows?.[0]?.total_points || 0), org_id: orgId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -834,7 +1466,7 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
   try {
     const actorUserId = req.session.user.user_id;
     const actorRole = req.session.user.role;
-    const { user_id, point_change, reason } = req.body;
+    const { user_id, point_change, reason, org_id } = req.body;
 
     if (typeof point_change !== "number" || Number.isNaN(point_change)) {
       return res.status(400).json({ error: "Points must be a number" });
@@ -847,11 +1479,9 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     }
 
     const [[driverRow]] = await conn.query(
-      `SELECT d.user_id, d.org_id, COALESCE(b.current_points, 0) AS current_points,
-              u.first_name, u.last_name
+      `SELECT d.user_id, d.org_id, u.first_name, u.last_name
        FROM DRIVERS d
        JOIN USERS u ON u.user_id = d.user_id
-       LEFT JOIN DRIVERPOINTBALANCES b ON b.user_id = d.user_id
        WHERE d.user_id = ?
        LIMIT 1`,
       [user_id]
@@ -861,14 +1491,25 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
       return res.status(404).json({ error: "Driver not found" });
     }
 
+    let targetOrgId = org_id ? Number(org_id) : null;
     if (actorRole === "sponsor") {
-      const sponsorOrgId = await getSponsorOrgId(conn, actorUserId);
-      if (!sponsorOrgId || Number(driverRow.org_id) !== Number(sponsorOrgId)) {
+      targetOrgId = await getSponsorOrgId(conn, actorUserId);
+    }
+    if (!targetOrgId) {
+      targetOrgId = await getDriverOrgId(conn, user_id);
+    }
+    if (!targetOrgId) {
+      return res.status(400).json({ error: "No sponsor context found for this driver" });
+    }
+
+    if (actorRole === "sponsor") {
+      const memberships = await getDriverSponsorMemberships(conn, user_id, ["APPROVED"]);
+      if (!memberships.some((m) => Number(m.org_id) === Number(targetOrgId))) {
         return res.status(403).json({ error: "You can only change points for drivers in your organization" });
       }
     }
 
-    const oldPoints = Number(driverRow.current_points || 0);
+    const oldPoints = await getDriverPointsBalance(conn, user_id, targetOrgId);
     const newPoints = oldPoints + Number(point_change);
     if (newPoints < 0) {
       return res.status(400).json({
@@ -879,15 +1520,10 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     }
 
     await conn.beginTransaction();
-    await conn.query(
-      `INSERT INTO DRIVERPOINTBALANCES (user_id, current_points)
-       VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE current_points = VALUES(current_points)`,
-      [user_id, newPoints]
-    );
+    await setDriverPointsBalance(conn, user_id, targetOrgId, newPoints);
     await conn.query(
       "INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id) VALUES (?, ?, ?, ?, ?)",
-      [user_id, driverRow.org_id || null, point_change, String(reason).trim(), actorUserId]
+      [user_id, targetOrgId, point_change, String(reason).trim(), actorUserId]
     );
 
     const actionWord = point_change > 0 ? "added" : "deducted";
@@ -902,7 +1538,7 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
     );
 
     await conn.commit();
-    res.json({ ok: true, oldPoints, newPoints, org_id: driverRow.org_id || null });
+    res.json({ ok: true, oldPoints, newPoints, org_id: targetOrgId });
   } catch (e) {
     try { await conn.rollback(); } catch (_) {}
     res.status(500).json({ error: e.message });
@@ -916,12 +1552,17 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const userId = req.session.user.user_id;
 
-    const [rows] = await pool.query(
-      "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ? ORDER BY created_at DESC LIMIT 25",
-      [userId]
-    );
+    const orgId = await getDriverSelectedOrgId(pool, req);
+    const params = [userId];
+    let sql = "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ?";
+    if (orgId) {
+      sql += " AND org_id = ?";
+      params.push(orgId);
+    }
+    sql += " ORDER BY created_at DESC LIMIT 25";
+    const [rows] = await pool.query(sql, params);
 
-    res.json({ ok: true, transactions: rows });
+    res.json({ ok: true, transactions: rows, org_id: orgId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -972,8 +1613,13 @@ app.get("/api/driver/point-history-filtered", requireRole("driver"), async (req,
     const userId = req.session.user.user_id;
     const { startDate, endDate } = req.query;
 
+    const orgId = await getDriverSelectedOrgId(pool, req);
     let query = "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ?";
     const params = [userId];
+    if (orgId) {
+      query += " AND org_id = ?";
+      params.push(orgId);
+    }
 
     // Add date range filtering if provided
     if (startDate) {
@@ -989,9 +1635,78 @@ app.get("/api/driver/point-history-filtered", requireRole("driver"), async (req,
 
     const [rows] = await pool.query(query, params);
 
-    res.json({ ok: true, transactions: rows });
+    res.json({ ok: true, transactions: rows, org_id: orgId });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/driver/sponsor-memberships", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const memberships = await getDriverSponsorMemberships(pool, userId, ["APPROVED"]);
+    const selectedOrgId = await getDriverSelectedOrgId(pool, req);
+    const balances = [];
+    for (const membership of memberships) {
+      const current_points = await getDriverPointsBalance(pool, userId, membership.org_id);
+      balances.push({ ...membership, current_points, is_selected: Number(selectedOrgId) === Number(membership.org_id) });
+    }
+    res.json({ ok: true, selected_org_id: selectedOrgId, sponsors: balances });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/driver/select-sponsor", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const orgId = Number(req.body?.org_id);
+    if (!orgId) return res.status(400).json({ error: "org_id is required" });
+    const memberships = await getDriverSponsorMemberships(pool, userId, ["APPROVED"]);
+    if (!memberships.some((m) => Number(m.org_id) === orgId)) {
+      return res.status(403).json({ error: "You are not approved for that sponsor" });
+    }
+    req.session.selected_driver_org_id = orgId;
+    req.session.cart = { items: [], org_id: orgId };
+    res.json({ ok: true, selected_org_id: orgId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/admin/drivers/:driverUserId/sponsors", requireRole("admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const driverUserId = Number(req.params.driverUserId);
+    const memberships = await getDriverSponsorMemberships(pool, driverUserId, []);
+    res.json({ ok: true, sponsors: memberships });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/admin/drivers/:driverUserId/sponsors", requireRole("admin"), async (req, res) => {
+  const conn = await getPool().getConnection();
+  try {
+    const driverUserId = Number(req.params.driverUserId);
+    const orgId = Number(req.body?.org_id);
+    if (!driverUserId || !orgId) return res.status(400).json({ error: "driver user and org_id are required" });
+    await conn.beginTransaction();
+    await ensureDriverMembership(conn, { userId: driverUserId, orgId, allowMove: false, actorUserId: req.session.user.user_id });
+    await conn.query(
+      `INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, org_id, details)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      ["ADMIN_ASSIGN_DRIVER_SPONSOR", "DRIVER_SPONSOR", driverUserId, req.session.user.user_id, orgId, JSON.stringify({ driver_user_id: driverUserId, org_id: orgId })]
+    );
+    await conn.commit();
+    res.json({ ok: true, message: "Driver assigned to sponsor" });
+  } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
   }
 });
 
@@ -1047,17 +1762,34 @@ app.get("/api/sponsor/driver-balances", requireRole("sponsor"), async (req, res)
   try {
     const pool = getPool();
     const sponsorUserId = req.session.user.user_id;
-
     const orgId = await getSponsorOrgId(pool, sponsorUserId);
     if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
 
-    const [rows] = await pool.query(
-      `SELECT *
-       FROM vw_sponsor_driver_point_balances
-       WHERE org_id = ?
-       ORDER BY last_name, first_name, driver_user_id`,
-      [orgId]
-    );
+    let rows;
+    try {
+      [rows] = await pool.query(
+        `SELECT d.user_id AS driver_user_id, u.email AS driver_email, u.first_name, u.last_name, d.driver_status,
+                ds.sponsorship_status, COALESCE(dpb.current_points, 0) AS current_points, dpb.updated_at AS balance_updated_at, ? AS org_id
+         FROM DRIVER_SPONSORS ds
+         JOIN DRIVERS d ON d.user_id = ds.user_id
+         JOIN USERS u ON u.user_id = d.user_id
+         LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = ds.user_id AND dpb.org_id = ds.org_id
+         WHERE ds.org_id = ? AND ds.sponsorship_status = 'APPROVED'
+         ORDER BY u.last_name, u.first_name, d.user_id`,
+        [orgId, orgId]
+      );
+    } catch (_) {
+      [rows] = await pool.query(
+        `SELECT d.user_id AS driver_user_id, u.email AS driver_email, u.first_name, u.last_name, d.driver_status,
+                'APPROVED' AS sponsorship_status, COALESCE(dpb.current_points, 0) AS current_points, dpb.updated_at AS balance_updated_at, d.org_id AS org_id
+         FROM DRIVERS d
+         JOIN USERS u ON u.user_id = d.user_id
+         LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+         WHERE d.org_id = ?
+         ORDER BY u.last_name, u.first_name, d.user_id`,
+        [orgId]
+      );
+    }
 
     res.json({ ok: true, org_id: orgId, drivers: rows });
   } catch (e) {
@@ -1069,38 +1801,34 @@ app.get("/api/sponsor/driver-point-transactions", requireRole("sponsor"), async 
   try {
     const pool = getPool();
     const sponsorUserId = req.session.user.user_id;
-
     const orgId = await getSponsorOrgId(pool, sponsorUserId);
     if (!orgId) return res.status(404).json({ error: "Sponsor org not found" });
 
     const { driver_user_id, startDate, endDate } = req.query;
-
     let query = `
-      SELECT *
-      FROM vw_sponsor_driver_point_transactions
-      WHERE org_id = ?
+      SELECT pt.transaction_id, pt.user_id AS driver_user_id, u.email AS driver_email, u.first_name, u.last_name,
+             pt.org_id, pt.point_change, pt.reason, pt.created_at, pt.actor_user_id
+      FROM POINTTRANSACTIONS pt
+      JOIN USERS u ON u.user_id = pt.user_id
+      WHERE pt.org_id = ?
     `;
     const params = [orgId];
 
     if (driver_user_id) {
-      query += " AND driver_user_id = ?";
+      query += " AND pt.user_id = ?";
       params.push(Number(driver_user_id));
     }
-
     if (startDate) {
-      query += " AND created_at >= ?";
+      query += " AND pt.created_at >= ?";
       params.push(startDate);
     }
-
     if (endDate) {
-      query += " AND created_at <= ?";
+      query += " AND pt.created_at <= ?";
       params.push(endDate + " 23:59:59");
     }
-
-    query += " ORDER BY created_at DESC LIMIT 200";
+    query += " ORDER BY pt.created_at DESC LIMIT 200";
 
     const [rows] = await pool.query(query, params);
-
     res.json({ ok: true, org_id: orgId, transactions: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1149,20 +1877,11 @@ app.get("/api/admin/audit-log", requireRole("admin"), async (req, res) => {
 app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
-    const userId = req.session.user.user_id;
+    const orgId = await getDriverSelectedOrgId(pool, req);
+    if (!orgId) return res.status(404).json({ error: "Driver sponsor not found" });
 
-    // Get the driver's org_id
-    const [driverRows] = await pool.query("SELECT org_id FROM DRIVERS WHERE user_id = ? LIMIT 1", [userId]);
-
-    if (!driverRows.length) {
-      return res.status(404).json({ error: "Driver not found" });
-    }
-
-    const orgId = driverRows[0].org_id;
-
-    // Get conversion rate
     const [conversionRows] = await pool.query(
-      "SELECT cents_per_point FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      "SELECT cents_per_point, org_name FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
       [orgId]
     );
 
@@ -1170,7 +1889,7 @@ app.get("/api/driver/conversion-rate", requireRole("driver"), async (req, res) =
       return res.status(404).json({ error: "Conversion rate not found" });
     }
 
-    res.json({ ok: true, conversion_rate: conversionRows[0].cents_per_point });
+    res.json({ ok: true, org_id: orgId, org_name: conversionRows[0].org_name, conversion_rate: conversionRows[0].cents_per_point });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1247,11 +1966,17 @@ app.post("/api/sponsor/create-driver", requireRole("sponsor"), async (req, res) 
       [userId, orgId, phone.trim()]
     );
 
-    // Initialize point balance
-    await pool.query(
-      "INSERT INTO DRIVERPOINTBALANCES (user_id, current_points) VALUES (?, 0)",
-      [userId]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO DRIVER_SPONSORS (user_id, org_id, sponsorship_status, assigned_by_user_id, applied_at, decided_at)
+         VALUES (?, ?, 'APPROVED', ?, NOW(), NOW())`,
+        [userId, orgId, sponsorUserId]
+      );
+    } catch (_) {
+      // ignore if RC2 table not available
+    }
+
+    await setDriverPointsBalance(pool, userId, orgId, 0);
 
     res.json({ 
       ok: true, 
@@ -1314,15 +2039,21 @@ app.put("/api/sponsor/drop-driver", requireRole("sponsor"), async (req, res) => 
 
     // Update driver status to inactive
     await pool.query(
-      "UPDATE DRIVERS SET driver_status = 'inactive' WHERE user_id = ?",
+      "UPDATE DRIVERS SET driver_status = 'dropped' WHERE user_id = ?",
       [driver_user_id]
     );
 
-    // Clear org affiliation
-    await pool.query(
-      "UPDATE DRIVERS SET org_id = NULL WHERE user_id = ?",
-      [driver_user_id]
-    );
+    try {
+      await pool.query(
+        `UPDATE DRIVER_SPONSORS SET sponsorship_status = 'DROPPED', decided_at = NOW(), decision_reason = ? WHERE user_id = ? AND org_id = ?`,
+        ['Dropped by sponsor', driver_user_id, sponsorOrgId]
+      );
+    } catch (_) {
+      await pool.query(
+        "UPDATE DRIVERS SET org_id = NULL WHERE user_id = ?",
+        [driver_user_id]
+      );
+    }
 
     // Audit log the drop event
     await pool.query(
@@ -1474,6 +2205,8 @@ app.put("/api/sponsor/approve-application", requireRole("sponsor"), async (req, 
       [application_id]
     );
 
+    await ensureDriverMembership(pool, { userId: application.user_id, orgId: application.org_id, allowMove: false, actorUserId });
+
     // Audit log the approval
     await pool.query(
       "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
@@ -1530,7 +2263,7 @@ app.get("/api/driver/application", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const userId = req.session.user.user_id;
 
-    const [rows] = await pool.query(
+    const [applications] = await pool.query(
       `SELECT
          da.application_id,
          da.org_id,
@@ -1542,11 +2275,12 @@ app.get("/api/driver/application", requireRole("driver"), async (req, res) => {
        FROM DRIVERAPPLICATIONS da
        LEFT JOIN SPONSORORGANIZATION so ON so.org_id = da.org_id
        WHERE da.user_id = ?
-       ORDER BY da.application_date DESC, da.application_id DESC`,
+       ORDER BY FIELD(UPPER(da.application_status), 'PENDING', 'APPROVED', 'REJECTED', 'REVOKED'), da.application_date DESC, da.application_id DESC`,
       [userId]
     );
 
-    return res.json({ ok: true, applications: rows });
+    const memberships = await getDriverSponsorMemberships(pool, userId, ["APPROVED"]);
+    return res.json({ ok: true, application: applications[0] || null, applications, memberships });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -1586,7 +2320,7 @@ app.post("/api/driver/applications", requireRole("driver"), async (req, res) => 
       return res.status(400).json({ error: "Sponsor organization is not active" });
     }
 
-    // Enforce: do not allow duplicate application to the same sponsor org
+    // Enforce: do not allow duplicate pending/approved application to the same sponsor org
     const [existingRows] = await pool.query(
       `SELECT application_id, application_status
        FROM DRIVERAPPLICATIONS
@@ -1596,22 +2330,31 @@ app.post("/api/driver/applications", requireRole("driver"), async (req, res) => 
       [userId, orgId]
     );
 
+    let applicationId;
     if (existingRows.length) {
-      return res.status(409).json({
-        error: "You have already applied to this sponsor organization."
-      });
+      const existingStatus = String(existingRows[0].application_status || '').toUpperCase();
+      if (["PENDING", "APPROVED"].includes(existingStatus)) {
+        return res.status(409).json({
+          error: "You have already applied to this sponsor organization."
+        });
+      }
+      await pool.query(
+        `UPDATE DRIVERAPPLICATIONS
+         SET application_status = 'PENDING', is_active = 1, application_date = NOW(), decision_reason = ?
+         WHERE application_id = ?`,
+        [msg || null, existingRows[0].application_id]
+      );
+      applicationId = existingRows[0].application_id;
+    } else {
+      const [result] = await pool.query(
+        `INSERT INTO DRIVERAPPLICATIONS
+          (user_id, org_id, application_status, is_active, application_date, decision_reason)
+         VALUES
+          (?, ?, 'PENDING', 1, NOW(), ?)`,
+        [userId, orgId, msg || null]
+      );
+      applicationId = result.insertId;
     }
-
-    // Create application
-    const [result] = await pool.query(
-      `INSERT INTO DRIVERAPPLICATIONS
-        (user_id, org_id, application_status, is_active, application_date, decision_reason)
-       VALUES
-        (?, ?, 'PENDING', 1, NOW(), ?)`,
-      [userId, orgId, msg || null]
-    );
-
-    const applicationId = result.insertId;
 
     // Audit log
     await pool.query(
@@ -1742,6 +2485,9 @@ app.get("/api/driver/sponsors", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const q = String(req.query.q || "").trim();
 
+    const memberships = await getDriverSponsorMemberships(pool, req.session.user.user_id, ["APPROVED"]);
+    const approvedSet = new Set(memberships.map((m) => Number(m.org_id)));
+
     const sql = `
       SELECT org_id, org_name, org_status
       FROM SPONSORORGANIZATION
@@ -1752,7 +2498,7 @@ app.get("/api/driver/sponsors", requireRole("driver"), async (req, res) => {
     `;
 
     const [rows] = await pool.query(sql, [q, q]);
-    res.json({ ok: true, sponsors: rows });
+    res.json({ ok: true, sponsors: rows.map((row) => ({ ...row, already_joined: approvedSet.has(Number(row.org_id)) })) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1889,7 +2635,7 @@ app.get("/api/driver/catalog", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
     await ensureCatalogTables(pool);
-    const orgId = await getDriverOrgId(pool, req.session.user.user_id);
+    const orgId = await getDriverSelectedOrgId(pool, req);
     if (!orgId) return res.status(404).json({ error: "Driver sponsor org not found" });
 
     const [rows] = await pool.query(
@@ -1909,7 +2655,7 @@ app.get("/api/driver/catalog", requireRole("driver"), async (req, res) => {
 });
 
 app.get("/api/driver/cart", requireRole("driver"), async (req, res) => {
-  res.json({ ok: true, items: req.session.cart?.items || [] });
+  res.json({ ok: true, items: req.session.cart?.items || [], org_id: req.session.cart?.org_id || null });
 });
 
 app.post("/api/driver/cart/items", requireRole("driver"), async (req, res) => {
@@ -1920,7 +2666,7 @@ app.post("/api/driver/cart/items", requireRole("driver"), async (req, res) => {
 
     const pool = getPool();
     await ensureCatalogTables(pool);
-    const orgId = await getDriverOrgId(pool, req.session.user.user_id);
+    const orgId = await getDriverSelectedOrgId(pool, req);
     if (!orgId) return res.status(404).json({ error: "Driver sponsor org not found" });
 
     const [catalogRows] = await pool.query(
@@ -1939,7 +2685,7 @@ app.post("/api/driver/cart/items", requireRole("driver"), async (req, res) => {
       return res.status(400).json({ error: "Item is currently unavailable" });
     }
 
-    if (!req.session.cart) req.session.cart = { items: [] };
+    if (!req.session.cart || Number(req.session.cart.org_id) !== Number(orgId)) req.session.cart = { items: [], org_id: orgId };
     const existing = req.session.cart.items.find((item) => item.item_id === item_id);
     if (existing) {
       existing.quantity += qty;
@@ -1978,7 +2724,7 @@ app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) =>
     await conn.beginTransaction();
 
     const userId = req.session.user.user_id;
-    const orgId = await getDriverOrgId(conn, userId);
+    const orgId = await getDriverSelectedOrgId(conn, req);
     if (!orgId) {
       await conn.rollback();
       return res.status(404).json({ error: "Driver sponsor org not found" });
@@ -2008,11 +2754,7 @@ app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) =>
       liveItems.push({ ...liveItem, quantity: Number(item.quantity || 1) });
     }
 
-    const [balanceRows] = await conn.query(
-      "SELECT current_points FROM DRIVERPOINTBALANCES WHERE user_id = ? LIMIT 1",
-      [userId]
-    );
-    const currentPoints = balanceRows.length ? Number(balanceRows[0].current_points || 0) : 0;
+    const currentPoints = await getDriverPointsBalance(conn, userId, orgId);
     if (currentPoints < totalPoints) {
       await conn.rollback();
       return res.status(400).json({ error: `Insufficient points. Required ${totalPoints}, available ${currentPoints}.` });
@@ -2032,10 +2774,7 @@ app.post("/api/driver/cart/checkout", requireRole("driver"), async (req, res) =>
       );
     }
 
-    await conn.query(
-      "UPDATE DRIVERPOINTBALANCES SET current_points = current_points - ? WHERE user_id = ?",
-      [totalPoints, userId]
-    );
+    await setDriverPointsBalance(conn, userId, orgId, currentPoints - totalPoints);
 
     await conn.query(
       `INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
@@ -2072,13 +2811,14 @@ app.get("/api/driver/purchases", requireRole("driver"), async (req, res) => {
     const pool = getPool();
     const userId = req.session.user.user_id;
     const [rows] = await pool.query(
-      `SELECT p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at,
+      `SELECT p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at, p.org_id, so.org_name,
               COALESCE(SUM(pi.points_cost * pi.quantity), 0) AS total_points,
               COUNT(pi.purchase_item_id) AS item_count
        FROM PURCHASES p
+       LEFT JOIN SPONSORORGANIZATION so ON so.org_id = p.org_id
        LEFT JOIN PURCHASEITEMS pi ON pi.purchase_id = p.purchase_id
        WHERE p.user_id = ?
-       GROUP BY p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at
+       GROUP BY p.purchase_id, p.purchase_status, p.confirmed_at, p.created_at, p.org_id, so.org_name
        ORDER BY p.created_at DESC
        LIMIT 50`,
       [userId]
@@ -2163,12 +2903,8 @@ async function updatePurchaseStatus(conn, purchaseId, nextStatus, actorUserId, a
 
   let refunded = false;
   if (normalizedStatus === 'CANCELLED' && currentStatus !== 'CANCELLED' && totalPoints > 0) {
-    await conn.query(
-      `UPDATE DRIVERPOINTBALANCES
-       SET current_points = current_points + ?
-       WHERE user_id = ?`,
-      [totalPoints, purchase.user_id]
-    );
+    const restoredPoints = await getDriverPointsBalance(conn, purchase.user_id, purchase.org_id);
+    await setDriverPointsBalance(conn, purchase.user_id, purchase.org_id, restoredPoints + totalPoints);
     await conn.query(
       `INSERT INTO POINTTRANSACTIONS (user_id, org_id, point_change, reason, actor_user_id)
        VALUES (?, ?, ?, ?, ?)`,
@@ -2315,22 +3051,19 @@ app.get("/api/driver/point-history", requireRole("driver"), async (req, res) => 
   try {
     const pool = getPool();
     const userId = req.session.user.user_id;
+    const orgId = await getDriverSelectedOrgId(pool, req);
 
-    const [transactions] = await pool.query(
-      `SELECT 
-        transaction_id,
-        point_change,
-        reason,
-        created_at,
-        actor_user_id
-      FROM POINTTRANSACTIONS 
-      WHERE user_id = ? 
-      ORDER BY created_at DESC 
-      LIMIT 100`,
-      [userId]
-    );
+    const params = [userId];
+    let sql = `SELECT transaction_id, org_id, point_change, reason, created_at, actor_user_id
+               FROM POINTTRANSACTIONS WHERE user_id = ?`;
+    if (orgId) {
+      sql += ` AND org_id = ?`;
+      params.push(orgId);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT 100`;
 
-    res.json({ ok: true, transactions });
+    const [transactions] = await pool.query(sql, params);
+    res.json({ ok: true, transactions, org_id: orgId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2378,15 +3111,17 @@ app.get("/api/admin/reports/drivers", requireRole("admin"), async (req, res) => 
         u.first_name,
         u.last_name,
         d.driver_status,
-        d.org_id,
+        COALESCE(ds.org_id, d.org_id) AS org_id,
         so.org_name,
         COALESCE(dpb.current_points, 0) AS current_points,
-        dpb.updated_at AS balance_updated_at
+        dpb.updated_at AS balance_updated_at,
+        COALESCE(ds.sponsorship_status, 'APPROVED') AS sponsorship_status
       FROM DRIVERS d
       JOIN USERS u ON u.user_id = d.user_id
-      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = d.org_id
-      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
-      ORDER BY u.last_name, u.first_name, d.user_id;
+      LEFT JOIN DRIVER_SPONSORS ds ON ds.user_id = d.user_id
+      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = COALESCE(ds.org_id, d.org_id)
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id AND dpb.org_id = COALESCE(ds.org_id, d.org_id)
+      ORDER BY u.last_name, u.first_name, d.user_id, so.org_name;
     `);
     res.json({ ok: true, rows });
   } catch (e) {
@@ -2402,14 +3137,15 @@ app.get("/api/admin/reports/points", requireRole("admin"), async (req, res) => {
         d.user_id AS driver_user_id,
         u.email AS driver_email,
         CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, '')) AS driver_name,
-        d.org_id,
+        COALESCE(ds.org_id, d.org_id) AS org_id,
         so.org_name,
         COALESCE(dpb.current_points, 0) AS current_points,
         dpb.updated_at AS balance_updated_at
       FROM DRIVERS d
       JOIN USERS u ON u.user_id = d.user_id
-      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = d.org_id
-      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+      LEFT JOIN DRIVER_SPONSORS ds ON ds.user_id = d.user_id
+      LEFT JOIN SPONSORORGANIZATION so ON so.org_id = COALESCE(ds.org_id, d.org_id)
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id AND dpb.org_id = COALESCE(ds.org_id, d.org_id)
       ORDER BY current_points DESC, d.user_id ASC;
     `);
 
@@ -2419,11 +3155,10 @@ app.get("/api/admin/reports/points", requireRole("admin"), async (req, res) => {
         so.org_name,
         COALESCE(SUM(CASE WHEN pt.point_change > 0 THEN pt.point_change ELSE 0 END), 0) AS points_awarded,
         COALESCE(SUM(CASE WHEN pt.point_change < 0 THEN ABS(pt.point_change) ELSE 0 END), 0) AS points_redeemed,
-        COALESCE(SUM(COALESCE(dpb.current_points, 0)), 0) AS current_points_held
+        COALESCE(SUM(DISTINCT COALESCE(dpb.current_points, 0)), 0) AS current_points_held
       FROM SPONSORORGANIZATION so
       LEFT JOIN POINTTRANSACTIONS pt ON pt.org_id = so.org_id
-      LEFT JOIN DRIVERS d ON d.org_id = so.org_id
-      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.org_id = so.org_id
       GROUP BY so.org_id, so.org_name
       ORDER BY so.org_name;
     `);
@@ -2509,16 +3244,21 @@ app.get("/api/sponsor/reports/top-drivers", requireRole("sponsor"), async (req, 
     if (!orgId) return res.status(404).json({ error: "Sponsor organization not found" });
     const [rows] = await pool.query(`
       SELECT
-        driver_user_id,
-        driver_email,
-        first_name,
-        last_name,
-        driver_status,
-        points_earned_total,
-        points_redeemed_total,
-        net_points
-      FROM vw_sponsor_top_drivers_by_points_earned
-      WHERE org_id = ?
+        d.user_id AS driver_user_id,
+        u.email AS driver_email,
+        u.first_name,
+        u.last_name,
+        d.driver_status,
+        COALESCE(SUM(CASE WHEN pt.point_change > 0 THEN pt.point_change ELSE 0 END), 0) AS points_earned_total,
+        COALESCE(SUM(CASE WHEN pt.point_change < 0 THEN ABS(pt.point_change) ELSE 0 END), 0) AS points_redeemed_total,
+        COALESCE(dpb.current_points, 0) AS net_points
+      FROM DRIVER_SPONSORS ds
+      JOIN DRIVERS d ON d.user_id = ds.user_id
+      JOIN USERS u ON u.user_id = d.user_id
+      LEFT JOIN POINTTRANSACTIONS pt ON pt.user_id = d.user_id AND pt.org_id = ds.org_id
+      LEFT JOIN DRIVERPOINTBALANCES dpb ON dpb.user_id = d.user_id AND dpb.org_id = ds.org_id
+      WHERE ds.org_id = ? AND ds.sponsorship_status = 'APPROVED'
+      GROUP BY d.user_id, u.email, u.first_name, u.last_name, d.driver_status, dpb.current_points
       ORDER BY net_points DESC, points_earned_total DESC, driver_user_id ASC;
     `, [orgId]);
     res.json({ ok: true, rows });
@@ -2584,6 +3324,25 @@ app.get("/api/sponsor/reports/invoice-summary", requireRole("sponsor"), async (r
   }
 });
 
+
+
+app.post("/api/sponsor/bulk-load", requireRole("sponsor"), upload.single("file"), async (req, res) => {
+  try {
+    const data = await processBulkLoadUpload({ req, mode: "sponsor" });
+    res.json(data);
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message });
+  }
+});
+
+app.post("/api/admin/bulk-load", requireRole("admin"), upload.single("file"), async (req, res) => {
+  try {
+    const data = await processBulkLoadUpload({ req, mode: "admin" });
+    res.json(data);
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message });
+  }
+});
 
 app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
 app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "public", "about.html")));

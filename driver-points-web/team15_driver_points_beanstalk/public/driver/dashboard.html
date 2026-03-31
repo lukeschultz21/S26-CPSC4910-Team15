@@ -6,133 +6,22 @@
   <title>Driver Dashboard</title>
   <link rel="stylesheet" href="/styles.css" />
   <style>
-    .filter-section {
-      background: rgba(59, 130, 246, 0.05);
-      padding: 16px;
-      border-radius: 8px;
-      margin-bottom: 16px;
-      border-left: 4px solid #3b82f6;
-    }
-
-    .filter-section label {
-      color: var(--text);
-      font-weight: 500;
-      display: block;
-      margin-bottom: 8px;
-      font-size: 14px;
-    }
-
-    .filter-controls {
-      display: grid;
-      grid-template-columns: 1fr 1fr auto auto;
-      gap: 8px;
-      align-items: flex-end;
-    }
-
-    .filter-controls input[type="date"] {
-      padding: 8px 12px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      font-size: 14px;
-      background: white;
-    }
-
-    .filter-controls button {
-      padding: 8px 16px;
-      font-size: 14px;
-      white-space: nowrap;
-    }
-
-    .transaction-type {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 12px;
-      font-weight: bold;
-    }
-
-    .transaction-type.addition {
-      background: #d4edda;
-      color: #155724;
-    }
-
-    .transaction-type.deduction {
-      background: #f8d7da;
-      color: #721c24;
-    }
-
-    .points-positive {
-      color: #38ef7d;
-      font-weight: bold;
-    }
-
-    .points-negative {
-      color: #ef5350;
-      font-weight: bold;
-    }
-
-    /* Sponsor search styles */
-    .search-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-      align-items: center;
-      margin-top: 10px;
-    }
-
-    .sponsor-list {
-      margin-top: 12px;
-      display: grid;
-      gap: 10px;
-    }
-
-    .sponsor-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 12px;
-      border: 1px solid #eee;
-      border-radius: 8px;
-      background: #fff;
-    }
-
-    .sponsor-name {
-      font-weight: 600;
-    }
-
-    .sponsor-meta {
-      color: var(--muted);
-      font-size: 13px;
-      margin-top: 2px;
-    }
-
-    .apply-form {
-      margin-top: 12px;
-      padding: 12px;
-      border: 1px dashed #ddd;
-      border-radius: 8px;
-      background: rgba(59, 130, 246, 0.03);
-    }
-
-    .apply-form textarea {
-      width: 100%;
-      min-height: 80px;
-      resize: vertical;
-    }
-
-    @media (max-width: 768px) {
-      .filter-controls {
-        grid-template-columns: 1fr;
-      }
-      .search-row {
-        grid-template-columns: 1fr;
-      }
-      .sponsor-item {
-        flex-direction: column;
-        align-items: stretch;
-      }
-    }
+    .hero-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+    .hero-card { padding:22px; border-radius:14px; color:#fff; box-shadow:0 4px 10px rgba(0,0,0,.12); }
+    .hero-card h3 { margin:0 0 6px; font-size:14px; opacity:.9; }
+    .hero-card .value { font-size:40px; font-weight:800; }
+    .hero-card .sub { font-size:13px; opacity:.9; }
+    .blue { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); }
+    .pink { background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%); }
+    .green { background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%); }
+    .sponsor-grid { display:grid; gap:10px; }
+    .sponsor-item { display:flex; justify-content:space-between; gap:12px; padding:12px; border:1px solid rgba(255,255,255,.08); border-radius:10px; background:rgba(255,255,255,.03); }
+    .pill-ok { display:inline-block; padding:4px 10px; border-radius:999px; background:#1f7a47; color:#fff; font-size:12px; }
+    .pill-muted { display:inline-block; padding:4px 10px; border-radius:999px; background:#374151; color:#fff; font-size:12px; }
+    .search-row { display:grid; grid-template-columns:1fr auto; gap:8px; }
+    .point-plus { color:#38ef7d; font-weight:700; }
+    .point-minus { color:#ef5350; font-weight:700; }
+    @media (max-width: 768px) { .search-row { grid-template-columns:1fr; } .sponsor-item { flex-direction:column; } }
   </style>
 </head>
 <body>
@@ -155,423 +44,275 @@
       <div class="small" id="welcome"></div>
     </div>
 
-    <!-- Application Status Section -->
     <div class="card" style="margin-top:18px">
-      <h3 style="margin:0 0 6px">My Application</h3>
-      <div class="small" id="appSubtitle">Loading application status...</div>
-
-      <div class="row" style="margin-top:12px; gap: 10px; align-items:center;">
+      <div class="row" style="justify-content:space-between; gap:12px; align-items:end; flex-wrap:wrap">
         <div>
-          <span class="pill-status" id="appStatusPill">-</span>
+          <h3 style="margin:0 0 6px">Active Sponsor</h3>
+          <div class="small">Switch sponsors to view balances, catalog items, and redemption rules by sponsor.</div>
         </div>
-        <button class="btn btn-danger" id="withdrawBtn" style="display:none;">Withdraw Application</button>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <select id="sponsorSelect" style="min-width:260px"></select>
+          <button class="btn" id="switchSponsorBtn" type="button">Use Sponsor</button>
+        </div>
       </div>
-
-      <div class="msg" id="appMsg" style="margin-top:10px"></div>
+      <div class="msg" id="sponsorMsg" style="margin-top:10px"></div>
+      <div class="sponsor-grid" id="sponsorSummary" style="margin-top:12px"></div>
     </div>
 
-    <!-- Sponsor Search + Apply -->
+    <div class="hero-grid" style="margin-top:18px">
+      <div class="hero-card blue">
+        <h3>Current Points Balance</h3>
+        <div class="value" id="pointsAmount">0</div>
+        <div class="sub" id="selectedSponsorLabel">No sponsor selected</div>
+      </div>
+      <div class="hero-card pink">
+        <h3>Lifetime Points Earned</h3>
+        <div class="value" id="lifetimePoints">0</div>
+        <div class="sub">For the selected sponsor</div>
+      </div>
+      <div class="hero-card green">
+        <h3>Points to Dollar Conversion</h3>
+        <div class="value" style="font-size:26px" id="conversionRate">Loading...</div>
+        <div class="sub">Sponsor-specific redemption value</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 6px">My Sponsor Applications</h3>
+      <div class="small">Pending, approved, rejected, and withdrawn applications are all tracked here.</div>
+      <div id="applicationList" style="display:grid; gap:10px; margin-top:12px"></div>
+      <div class="msg" id="appMsg"></div>
+    </div>
+
     <div class="card" style="margin-top:18px">
       <h3 style="margin:0 0 6px">Find a Sponsor</h3>
-      <div class="small">Search sponsor organizations and apply to their program.</div>
-
-      <div class="search-row">
-        <input id="sponsorSearchInput" placeholder="Search by sponsor name (ex: Acme Logistics)" />
+      <div class="small">Search sponsor organizations and apply to join another sponsor program.</div>
+      <div class="search-row" style="margin-top:12px">
+        <input id="sponsorSearchInput" placeholder="Search by sponsor name" />
         <button class="btn" id="sponsorSearchBtn" type="button">Search</button>
       </div>
-
       <div class="msg" id="sponsorSearchMsg" style="margin-top:10px"></div>
-      <div class="sponsor-list" id="sponsorList"></div>
-
-      <div class="apply-form" id="applyForm" style="display:none;">
-        <div class="small" id="applyToLabel" style="margin-bottom:8px;">Applying to:</div>
-        <label for="applyMessage">Message (optional, 225 characters max)</label>
-        <textarea id="applyMessage" maxlength="225" placeholder="Short message to the sponsor..."></textarea>
-
-        <div class="row" style="margin-top:10px; gap: 8px;">
-          <button class="btn primary" id="submitApplicationBtn" type="button">Submit Application</button>
-          <button class="btn ghost" id="cancelApplicationBtn" type="button">Cancel</button>
-        </div>
-
-        <div class="msg" id="applyMsg" style="margin-top:10px"></div>
-      </div>
+      <div id="sponsorList" style="display:grid; gap:10px; margin-top:12px"></div>
     </div>
 
-    <!-- Current Points Display Section -->
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); margin-top:18px;">
-      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Current Points Balance</h3>
-      <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="pointsAmount">0</div>
-    </div>
-
-    <!-- Lifetime Points Display Section -->
-    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Lifetime Points Earned</h3>
-      <div style="font-size: 48px; font-weight: bold; margin: 8px 0;" id="lifetimePoints">0</div>
-    </div>
-
-    <!-- Conversion Rate Display Section -->
-    <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-      <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
-      <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
-    </div>
-
-    <!-- Point History with Date Range Filter -->
     <div class="card" style="margin-top:18px">
-      <h3 style="margin:0 0 6px">Point History & Transactions</h3>
-      <div class="small">Track your point additions and deductions with detailed reasons.</div>
-
-      <div class="filter-section">
-        <label>Filter by Date Range:</label>
-        <div class="filter-controls">
-          <div>
-            <label style="margin: 0 0 4px 0; font-size: 12px;">Start Date</label>
-            <input type="date" id="filterStartDate" />
-          </div>
-          <div>
-            <label style="margin: 0 0 4px 0; font-size: 12px;">End Date</label>
-            <input type="date" id="filterEndDate" />
-          </div>
-          <button class="btn" onclick="filterPointHistory()" style="margin-top: 20px;">Filter</button>
-          <button class="btn ghost" onclick="clearPointHistoryFilter()" style="margin-top: 20px;">Clear</button>
+      <div class="row" style="justify-content:space-between; gap:12px; align-items:end; flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0 0 6px">Point History</h3>
+          <div class="small">Transaction history for the selected sponsor.</div>
+        </div>
+        <div class="row" style="gap:8px; flex-wrap:wrap">
+          <input type="date" id="filterStartDate" />
+          <input type="date" id="filterEndDate" />
+          <button class="btn" id="filterBtn" type="button">Filter</button>
+          <button class="btn ghost" id="clearFilterBtn" type="button">Clear</button>
         </div>
       </div>
-
-      <table class="table" id="txTable">
+      <table class="table" id="txTable" style="margin-top:12px">
         <thead>
           <tr>
             <th>Date</th>
+            <th>Sponsor</th>
             <th>Points</th>
-            <th>Type</th>
             <th>Reason</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
       <div class="msg" id="historyMsg"></div>
-      <div class="msg" id="msg"></div>
     </div>
-
-    <script src="/app.js"></script>
-    <script>
-      const welcome = Team15.qs("#welcome");
-      const pointsEl = Team15.qs("#pointsAmount");
-      const lifetimeEl = Team15.qs("#lifetimePoints");
-      const conversionEl = Team15.qs("#conversionRate");
-      const tbody = Team15.qs("#txTable tbody");
-      const msg = Team15.qs("#msg");
-      const historyMsg = Team15.qs("#historyMsg");
-
-      // Application UI
-      const appSubtitle = Team15.qs("#appSubtitle");
-      const appStatusPill = Team15.qs("#appStatusPill");
-      const withdrawBtn = Team15.qs("#withdrawBtn");
-      const appMsg = Team15.qs("#appMsg");
-      let currentApplicationId = null;
-
-      // Sponsor search/apply UI
-      const sponsorSearchInput = Team15.qs("#sponsorSearchInput");
-      const sponsorSearchBtn = Team15.qs("#sponsorSearchBtn");
-      const sponsorSearchMsg = Team15.qs("#sponsorSearchMsg");
-      const sponsorList = Team15.qs("#sponsorList");
-
-      const applyForm = Team15.qs("#applyForm");
-      const applyToLabel = Team15.qs("#applyToLabel");
-      const applyMessage = Team15.qs("#applyMessage");
-      const submitApplicationBtn = Team15.qs("#submitApplicationBtn");
-      const cancelApplicationBtn = Team15.qs("#cancelApplicationBtn");
-      const applyMsg = Team15.qs("#applyMsg");
-
-      let applyingOrgId = null;
-      let applyingOrgName = "";
-
-      function renderRow(tx) {
-        let dateStr = "Invalid Date";
-        if (tx.created_at) {
-          const date = new Date(tx.created_at);
-          if (!isNaN(date.getTime())) {
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const year = date.getFullYear();
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            dateStr = `${month}/${day}/${year} ${hours}:${minutes}`;
-          }
-        }
-
-        const pts = tx.point_change || 0;
-        const reason = tx.reason || "No reason provided";
-        const typeClass = pts > 0 ? "addition" : "deduction";
-        const typeLabel = pts > 0 ? "✅ Addition" : "❌ Deduction";
-        const ptsClass = pts > 0 ? "points-positive" : "points-negative";
-
-        return `
-          <tr>
-            <td>${dateStr}</td>
-            <td class="${ptsClass}">${pts > 0 ? "+" : ""}${pts}</td>
-            <td><span class="transaction-type ${typeClass}">${typeLabel}</span></td>
-            <td>${reason}</td>
-          </tr>
-        `;
-      }
-
-      async function loadPointHistory() {
-        try {
-          const data = await Team15.api("/api/driver/transactions", { method: "GET" });
-          tbody.innerHTML = (data.transactions || []).map(renderRow).join("");
-          historyMsg.textContent = "";
-        } catch (e) {
-          historyMsg.textContent = "Error loading history: " + e.message;
-        }
-      }
-
-      async function filterPointHistory() {
-        try {
-          const startDate = Team15.qs("#filterStartDate").value;
-          const endDate = Team15.qs("#filterEndDate").value;
-
-          if (!startDate || !endDate) {
-            historyMsg.textContent = "⚠️ Please select both start and end dates";
-            return;
-          }
-
-          const data = await Team15.api(
-            `/api/driver/point-history-filtered?startDate=${startDate}&endDate=${endDate}`,
-            { method: "GET" }
-          );
-
-          if (!data.transactions || data.transactions.length === 0) {
-            tbody.innerHTML = `
-              <tr>
-                <td colspan="4" style="text-align: center; color: var(--muted); padding: 24px;">
-                  No transactions found in this date range
-                </td>
-              </tr>
-            `;
-            historyMsg.textContent = "";
-            return;
-          }
-
-          tbody.innerHTML = (data.transactions || []).map(renderRow).join("");
-          historyMsg.textContent = `✅ Showing ${data.transactions.length} transactions`;
-        } catch (e) {
-          historyMsg.textContent = "❌ Error filtering history: " + e.message;
-        }
-      }
-
-      function clearPointHistoryFilter() {
-        Team15.qs("#filterStartDate").value = "";
-        Team15.qs("#filterEndDate").value = "";
-        historyMsg.textContent = "";
-        loadPointHistory();
-      }
-
-      function statusLabel(statusRaw) {
-        const s = String(statusRaw || "").toUpperCase();
-        if (s === "PENDING") return "Pending";
-        if (s === "APPROVED") return "Approved";
-        if (s === "REJECTED") return "Rejected";
-        if (s === "REVOKED") return "Withdrawn";
-        return s ? (s.charAt(0) + s.slice(1).toLowerCase()) : "-";
-      }
-
-      async function loadMyApplication() {
-        appMsg.textContent = "";
-        withdrawBtn.style.display = "none";
-        currentApplicationId = null;
-
-        try {
-          const data = await Team15.api("/api/driver/application", { method: "GET" });
-          const app = data.application;
-
-          if (!app) {
-            appSubtitle.textContent = "No applications yet.";
-            appStatusPill.textContent = "-";
-            return;
-          }
-
-          currentApplicationId = app.application_id;
-          const status = String(app.application_status || "").toUpperCase();
-
-          appSubtitle.textContent = app.org_name
-            ? `Sponsor: ${app.org_name}`
-            : `Sponsor org_id: ${app.org_id}`;
-
-          appStatusPill.textContent = statusLabel(status);
-
-          if (status === "PENDING") {
-            withdrawBtn.style.display = "inline-block";
-          }
-        } catch (e) {
-          appSubtitle.textContent = "Error loading application.";
-          appMsg.textContent = e.message;
-        }
-      }
-
-      withdrawBtn.addEventListener("click", async () => {
-        if (!currentApplicationId) return;
-        if (!confirm("Withdraw your pending application?")) return;
-
-        try {
-          await Team15.api("/api/driver/withdraw-application", {
-            method: "PUT",
-            body: JSON.stringify({ application_id: currentApplicationId })
-          });
-
-          appMsg.textContent = "Application withdrawn.";
-          await loadMyApplication();
-        } catch (e) {
-          appMsg.textContent = "Error: " + e.message;
-        }
-      });
-
-      function hideApplyForm() {
-        applyForm.style.display = "none";
-        applyingOrgId = null;
-        applyingOrgName = "";
-        applyToLabel.textContent = "Applying to:";
-        applyMessage.value = "";
-        applyMsg.textContent = "";
-      }
-
-      function showApplyForm(orgId, orgName) {
-        applyingOrgId = Number(orgId);
-        applyingOrgName = String(orgName || "").trim();
-        applyToLabel.textContent = applyingOrgName
-          ? `Applying to: ${applyingOrgName}`
-          : `Applying to org_id: ${applyingOrgId}`;
-        applyMsg.textContent = "";
-        applyForm.style.display = "block";
-        applyMessage.focus();
-      }
-
-      function sponsorRow(org) {
-        const name = org.org_name || `Org ${org.org_id}`;
-        const safeName = String(name).replace(/'/g, "\\'");
-        return `
-          <div class="sponsor-item">
-            <div>
-              <div class="sponsor-name">${name}</div>
-              <div class="sponsor-meta">org_id: ${org.org_id}</div>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; justify-content:flex-end;">
-              <button class="btn" type="button" onclick="startApply(${org.org_id}, '${safeName}')">Apply</button>
-            </div>
-          </div>
-        `;
-      }
-
-      async function runSponsorSearch() {
-        sponsorSearchMsg.textContent = "";
-        sponsorList.innerHTML = "";
-        hideApplyForm();
-
-        const q = sponsorSearchInput.value.trim();
-        sponsorSearchMsg.textContent = "Searching sponsors...";
-
-        try {
-          const data = await Team15.api(`/api/driver/sponsors?q=${encodeURIComponent(q)}`, { method: "GET" });
-          const sponsors = data.sponsors || [];
-
-          if (!sponsors.length) {
-            sponsorSearchMsg.textContent = "No sponsor organizations found.";
-            return;
-          }
-
-          sponsorSearchMsg.textContent = `Showing ${sponsors.length} sponsor(s).`;
-          sponsorList.innerHTML = sponsors.map(sponsorRow).join("");
-        } catch (e) {
-          sponsorSearchMsg.textContent = "Error: " + e.message;
-        }
-      }
-
-      // Expose for inline onclick
-      window.startApply = (orgId, orgName) => {
-        showApplyForm(orgId, orgName);
-      };
-
-      cancelApplicationBtn.addEventListener("click", () => hideApplyForm());
-
-      submitApplicationBtn.addEventListener("click", async () => {
-        applyMsg.textContent = "";
-
-        if (!applyingOrgId) {
-          applyMsg.textContent = "Select a sponsor first.";
-          return;
-        }
-
-        try {
-          submitApplicationBtn.disabled = true;
-
-          await Team15.api("/api/driver/applications", {
-            method: "POST",
-            body: JSON.stringify({
-              org_id: applyingOrgId,
-              message: applyMessage.value.trim()
-            })
-          });
-
-          applyMsg.textContent = "Application submitted!";
-          hideApplyForm();
-
-          // Refresh status card (so it shows Pending + withdraw button)
-          await loadMyApplication();
-        } catch (e) {
-          applyMsg.textContent = "Error: " + e.message;
-        } finally {
-          submitApplicationBtn.disabled = false;
-        }
-      });
-
-      sponsorSearchBtn.addEventListener("click", runSponsorSearch);
-      sponsorSearchInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") runSponsorSearch();
-      });
-
-      async function init() {
-        const me = await Team15.loadMe();
-        if (!me) return window.location.href = "/login.html";
-        if (me.role !== "driver") return window.location.href = `/${me.role}/dashboard.html`;
-
-        if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
-        if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
-
-        welcome.textContent = `Signed in as ${me.email}`;
-
-        // Sprint 6: application status + sponsor search/apply
-        loadMyApplication();
-        runSponsorSearch();
-
-        try {
-          const p = await Team15.api("/api/driver/points", { method: "GET" });
-          pointsEl.textContent = p.current_points;
-        } catch (e) {
-          msg.textContent = e.message;
-        }
-
-        try {
-          const t = await Team15.api("/api/driver/total-points", { method: "GET" });
-          lifetimeEl.textContent = t.total_points;
-        } catch (e) {
-          msg.textContent = e.message;
-        }
-
-        try {
-          const c = await Team15.api("/api/driver/conversion-rate", { method: "GET" });
-          conversionEl.textContent = `${c.conversion_rate} points = $1`;
-        } catch (e) {
-          msg.textContent = e.message;
-        }
-
-        loadPointHistory();
-      }
-
-      Team15.qs("#logoutBtn").addEventListener("click", async () => {
-        await Team15.api("/api/logout", { method: "POST" });
-        window.location.href = "/";
-      });
-
-      init();
-    </script>
   </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const welcome = Team15.qs('#welcome');
+    const sponsorSelect = Team15.qs('#sponsorSelect');
+    const sponsorSummary = Team15.qs('#sponsorSummary');
+    const sponsorMsg = Team15.qs('#sponsorMsg');
+    const pointsEl = Team15.qs('#pointsAmount');
+    const lifetimeEl = Team15.qs('#lifetimePoints');
+    const conversionEl = Team15.qs('#conversionRate');
+    const selectedSponsorLabel = Team15.qs('#selectedSponsorLabel');
+    const applicationList = Team15.qs('#applicationList');
+    const appMsg = Team15.qs('#appMsg');
+    const sponsorSearchInput = Team15.qs('#sponsorSearchInput');
+    const sponsorSearchMsg = Team15.qs('#sponsorSearchMsg');
+    const sponsorList = Team15.qs('#sponsorList');
+    const tbody = Team15.qs('#txTable tbody');
+    const historyMsg = Team15.qs('#historyMsg');
+    let memberships = [];
+
+    function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function statusBadge(status) {
+      const s = String(status || '').toUpperCase();
+      return `<span class="${s === 'APPROVED' ? 'pill-ok' : 'pill-muted'}">${esc(s || 'UNKNOWN')}</span>`;
+    }
+    function formatDate(v) {
+      if (!v) return '-';
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+    }
+
+    async function loadMemberships() {
+      const data = await Team15.api('/api/driver/sponsor-memberships');
+      memberships = data.sponsors || [];
+      sponsorSelect.innerHTML = memberships.length
+        ? memberships.map(s => `<option value="${s.org_id}" ${s.is_selected ? 'selected' : ''}>${esc(s.org_name)} · ${Number(s.current_points || 0).toLocaleString()} pts</option>`).join('')
+        : '<option value="">No approved sponsors yet</option>';
+      sponsorSummary.innerHTML = memberships.length
+        ? memberships.map(s => `
+            <div class="sponsor-item">
+              <div>
+                <div><strong>${esc(s.org_name)}</strong> ${s.is_selected ? '<span class="pill">Selected</span>' : ''}</div>
+                <div class="small">${Number(s.current_points || 0).toLocaleString()} current points</div>
+              </div>
+              <div>${statusBadge(s.sponsorship_status)}</div>
+            </div>
+          `).join('')
+        : '<div class="small">You do not have any approved sponsors yet.</div>';
+      const selected = memberships.find(s => s.is_selected) || memberships[0];
+      selectedSponsorLabel.textContent = selected ? `Current sponsor: ${selected.org_name}` : 'No sponsor selected';
+    }
+
+    async function switchSponsor() {
+      const orgId = Number(sponsorSelect.value || 0);
+      if (!orgId) return;
+      const data = await Team15.api('/api/driver/select-sponsor', {
+        method: 'POST',
+        body: JSON.stringify({ org_id: orgId })
+      });
+      sponsorMsg.textContent = 'Sponsor switched successfully.';
+      await refreshAll();
+      return data;
+    }
+
+    async function loadTotals() {
+      const [points, lifetime, conversion] = await Promise.all([
+        Team15.api('/api/driver/points'),
+        Team15.api('/api/driver/total-points'),
+        Team15.api('/api/driver/conversion-rate').catch(() => ({ conversion_rate: null, org_name: null }))
+      ]);
+      pointsEl.textContent = Number(points.current_points || 0).toLocaleString();
+      lifetimeEl.textContent = Number(lifetime.total_points || 0).toLocaleString();
+      conversionEl.textContent = conversion.conversion_rate == null ? 'No sponsor' : `${conversion.conversion_rate}¢ per point`;
+      if (conversion.org_name) selectedSponsorLabel.textContent = `Current sponsor: ${conversion.org_name}`;
+    }
+
+    async function loadApplications() {
+      const data = await Team15.api('/api/driver/application');
+      const apps = data.applications || [];
+      applicationList.innerHTML = apps.length ? apps.map(app => `
+        <div class="sponsor-item">
+          <div>
+            <div><strong>${esc(app.org_name || ('Org ' + app.org_id))}</strong></div>
+            <div class="small">Applied ${formatDate(app.application_date)}${app.decision_reason ? ` · ${esc(app.decision_reason)}` : ''}</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            ${statusBadge(app.application_status)}
+            ${String(app.application_status || '').toUpperCase() === 'PENDING' ? `<button class="btn ghost" onclick="withdrawApplication(${app.application_id})">Withdraw</button>` : ''}
+          </div>
+        </div>
+      `).join('') : '<div class="small">No applications yet.</div>';
+    }
+
+    async function withdrawApplication(applicationId) {
+      if (!confirm('Withdraw this pending application?')) return;
+      await Team15.api('/api/driver/withdraw-application', {
+        method: 'PUT',
+        body: JSON.stringify({ application_id: applicationId })
+      });
+      appMsg.textContent = 'Application withdrawn.';
+      await loadApplications();
+    }
+    window.withdrawApplication = withdrawApplication;
+
+    function sponsorCard(org) {
+      return `
+        <div class="sponsor-item">
+          <div>
+            <div><strong>${esc(org.org_name || ('Org ' + org.org_id))}</strong></div>
+            <div class="small">${org.already_joined ? 'Already joined this sponsor.' : 'Eligible to apply.'}</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            ${org.already_joined ? '<span class="pill">Joined</span>' : `<button class="btn" onclick="applyToSponsor(${org.org_id})">Apply</button>`}
+          </div>
+        </div>`;
+    }
+
+    async function runSponsorSearch() {
+      sponsorSearchMsg.textContent = 'Searching sponsors...';
+      const q = sponsorSearchInput.value.trim();
+      const data = await Team15.api(`/api/driver/sponsors?q=${encodeURIComponent(q)}`);
+      const sponsors = data.sponsors || [];
+      sponsorSearchMsg.textContent = sponsors.length ? `Showing ${sponsors.length} sponsor(s).` : 'No sponsor organizations found.';
+      sponsorList.innerHTML = sponsors.map(sponsorCard).join('');
+    }
+
+    async function applyToSponsor(orgId) {
+      const message = prompt('Optional short application message:') || '';
+      await Team15.api('/api/driver/applications', {
+        method: 'POST',
+        body: JSON.stringify({ org_id: orgId, message })
+      });
+      sponsorSearchMsg.textContent = 'Application submitted.';
+      await loadApplications();
+      await runSponsorSearch();
+    }
+    window.applyToSponsor = applyToSponsor;
+
+    function renderRow(tx) {
+      const sponsor = memberships.find(m => Number(m.org_id) === Number(tx.org_id));
+      const cls = Number(tx.point_change || 0) >= 0 ? 'point-plus' : 'point-minus';
+      return `<tr>
+        <td>${formatDate(tx.created_at)}</td>
+        <td>${esc(sponsor?.org_name || ('Org ' + (tx.org_id ?? '')))}</td>
+        <td class="${cls}">${Number(tx.point_change || 0) > 0 ? '+' : ''}${Number(tx.point_change || 0)}</td>
+        <td>${esc(tx.reason || '')}</td>
+      </tr>`;
+    }
+
+    async function loadHistory(filtered = false) {
+      const startDate = Team15.qs('#filterStartDate').value;
+      const endDate = Team15.qs('#filterEndDate').value;
+      const url = filtered
+        ? `/api/driver/point-history-filtered?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+        : '/api/driver/transactions';
+      const data = await Team15.api(url);
+      const rows = data.transactions || [];
+      tbody.innerHTML = rows.length ? rows.map(renderRow).join('') : '<tr><td colspan="4" class="small">No transactions found.</td></tr>';
+      historyMsg.textContent = filtered ? `Showing ${rows.length} transaction(s).` : '';
+    }
+
+    async function refreshAll() {
+      await loadMemberships();
+      await loadTotals();
+      await loadApplications();
+      await loadHistory(false);
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = '/login.html';
+      if (me.role !== 'driver') return window.location.href = `/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      welcome.textContent = `Signed in as ${me.email}`;
+      await refreshAll();
+    }
+
+    Team15.qs('#switchSponsorBtn').addEventListener('click', () => switchSponsor().catch(e => sponsorMsg.textContent = e.message));
+    Team15.qs('#sponsorSearchBtn').addEventListener('click', () => runSponsorSearch().catch(e => sponsorSearchMsg.textContent = e.message));
+    Team15.qs('#filterBtn').addEventListener('click', () => loadHistory(true).catch(e => historyMsg.textContent = e.message));
+    Team15.qs('#clearFilterBtn').addEventListener('click', async () => {
+      Team15.qs('#filterStartDate').value = '';
+      Team15.qs('#filterEndDate').value = '';
+      await loadHistory(false).catch(e => historyMsg.textContent = e.message);
+    });
+    Team15.qs('#logoutBtn').addEventListener('click', async () => {
+      await Team15.api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    init().catch(e => { sponsorMsg.textContent = e.message; });
+  </script>
 </body>
 </html>

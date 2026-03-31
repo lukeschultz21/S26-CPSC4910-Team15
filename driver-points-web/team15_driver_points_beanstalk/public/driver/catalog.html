@@ -14,7 +14,7 @@
     .product-title { font-weight:700; min-height:48px; }
     .meta { color:var(--muted); font-size:13px; }
     .cart-row { display:grid; gap:8px; padding:12px 0; border-bottom:1px solid rgba(255,255,255,.08); }
-    .pill-status { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; background:#1f2937; }
+    .toolbar { display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:center; }
     @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -33,28 +33,37 @@
     </div>
 
     <div class="card">
-      <h2 style="margin:0 0 6px">Browse Your Sponsor Catalog</h2>
-      <div class="small" id="welcome"></div>
-      <p class="sub" style="margin-top:12px">These products come from your sponsor's eBay-backed catalog. Price and availability are rechecked when you add an item to the cart.</p>
+      <div class="toolbar">
+        <div>
+          <h2 style="margin:0 0 6px">Browse Your Sponsor Catalog</h2>
+          <div class="small" id="welcome"></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <select id="sponsorSelect" style="min-width:260px"></select>
+          <button class="btn" id="switchSponsorBtn" type="button">Use Sponsor</button>
+        </div>
+      </div>
+      <div class="msg" id="switchMsg" style="margin-top:10px"></div>
     </div>
 
     <div class="layout" style="margin-top:18px">
       <div class="card">
-        <h3 style="margin:0 0 10px">Available Products</h3>
-        <div class="msg" id="catalogMsg"></div>
-        <div class="grid" id="catalogGrid"></div>
+        <h3 style="margin-top:0">Catalog Items</h3>
+        <div class="small" id="catalogSubtitle">Loading sponsor catalog...</div>
+        <div id="catalogMsg" class="msg"></div>
+        <div class="grid" id="catalogGrid" style="margin-top:12px"></div>
       </div>
 
       <div class="card">
-        <h3 style="margin:0 0 10px">Shopping Cart</h3>
-        <div class="msg" id="cartMsg"></div>
+        <h3 style="margin-top:0">Shopping Cart</h3>
+        <div class="small" id="cartSponsorLabel">Selected sponsor cart</div>
         <div id="cartList"></div>
-        <div style="margin-top:12px"><strong>Total:</strong> <span id="cartTotal">0 pts</span></div>
-        <button class="btn" id="checkoutBtn" style="margin-top:12px; width:100%">Checkout</button>
-        <div style="margin-top:18px">
-          <h4 style="margin:0 0 8px">Recent Purchases</h4>
-          <div id="purchaseList" class="small"></div>
-        </div>
+        <div id="cartMsg" class="msg"></div>
+        <div style="margin-top:12px"><button class="btn" id="checkoutBtn">Checkout</button></div>
+
+        <hr style="margin:18px 0; border-color:rgba(255,255,255,.08)" />
+        <h3 style="margin-top:0">Purchase History</h3>
+        <div id="purchaseList" class="small"></div>
       </div>
     </div>
   </div>
@@ -62,45 +71,59 @@
   <script src="/app.js"></script>
   <script>
     const welcome = Team15.qs('#welcome');
-    const catalogGrid = Team15.qs('#catalogGrid');
+    const sponsorSelect = Team15.qs('#sponsorSelect');
+    const switchMsg = Team15.qs('#switchMsg');
+    const catalogSubtitle = Team15.qs('#catalogSubtitle');
     const catalogMsg = Team15.qs('#catalogMsg');
+    const catalogGrid = Team15.qs('#catalogGrid');
+    const cartSponsorLabel = Team15.qs('#cartSponsorLabel');
     const cartList = Team15.qs('#cartList');
     const cartMsg = Team15.qs('#cartMsg');
-    const cartTotal = Team15.qs('#cartTotal');
     const purchaseList = Team15.qs('#purchaseList');
+    let memberships = [];
+
+    function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function selectedMembership() { return memberships.find(m => String(m.org_id) === String(sponsorSelect.value)) || memberships.find(m => m.is_selected) || memberships[0]; }
+
+    async function loadMemberships() {
+      const data = await Team15.api('/api/driver/sponsor-memberships');
+      memberships = data.sponsors || [];
+      sponsorSelect.innerHTML = memberships.length
+        ? memberships.map(s => `<option value="${s.org_id}" ${s.is_selected ? 'selected' : ''}>${esc(s.org_name)} · ${Number(s.current_points || 0).toLocaleString()} pts</option>`).join('')
+        : '<option value="">No approved sponsors</option>';
+      const selected = selectedMembership();
+      cartSponsorLabel.textContent = selected ? `Cart for ${selected.org_name}` : 'No sponsor selected';
+      catalogSubtitle.textContent = selected ? `Currently viewing ${selected.org_name}` : 'No approved sponsors yet.';
+    }
 
     function productCard(item) {
       return `
         <div class="product-card">
-          <img src="${item.image_url || '/images/car-logo.png'}" alt="${item.title || 'Product'}" />
+          <img src="${esc(item.image_url || '')}" alt="${esc(item.title || '')}">
           <div class="product-body">
-            <div class="product-title">${item.title || 'Untitled Product'}</div>
-            <div class="meta">${item.description || ''}</div>
-            <div><span class="pill-status">${item.availability_status || 'Unknown Availability'}</span></div>
-            <div><strong>$${Number(item.price_value || 0).toFixed(2)}</strong> · <strong>${Number(item.points_cost || 0).toLocaleString()} pts</strong></div>
+            <div class="product-title">${esc(item.title || '')}</div>
+            <div class="meta">${Number(item.points_cost || 0).toLocaleString()} pts · ${esc(item.availability_status || 'Unknown')}</div>
+            <div class="meta">${esc(item.condition_text || '')}</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap">
-              <a class="btn ghost" href="${item.item_web_url || '#'}" target="_blank" rel="noopener">Open eBay</a>
-              <button class="btn" onclick="addToCart('${item.item_id}')">Add to Cart</button>
+              <button class="btn" onclick="addToCart('${esc(item.item_id || item.ebay_item_id || '')}')">Add to Cart</button>
+              ${item.item_web_url ? `<a class="btn ghost" href="${item.item_web_url}" target="_blank" rel="noreferrer">Open Listing</a>` : ''}
             </div>
           </div>
-        </div>
-      `;
+        </div>`;
     }
 
     function renderCart(items) {
-      const total = items.reduce((sum, item) => sum + (Number(item.points_cost || 0) * Number(item.quantity || 0)), 0);
-      cartTotal.textContent = `${total.toLocaleString()} pts`;
       if (!items.length) {
         cartList.innerHTML = '<div class="small">Your cart is empty.</div>';
         return;
       }
       cartList.innerHTML = items.map(item => `
         <div class="cart-row">
-          <div><strong>${item.title}</strong></div>
+          <div><strong>${esc(item.title)}</strong></div>
           <div>${Number(item.points_cost || 0).toLocaleString()} pts each · Qty ${item.quantity}</div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-            <input type="number" min="1" value="${item.quantity}" style="width:90px" onchange="updateQty('${item.item_id}', this.value)" />
-            <button class="btn ghost" onclick="removeFromCart('${item.item_id}')">Remove</button>
+            <input type="number" min="1" value="${item.quantity}" style="width:90px" onchange="updateQty('${esc(item.item_id)}', this.value)" />
+            <button class="btn ghost" onclick="removeFromCart('${esc(item.item_id)}')">Remove</button>
           </div>
         </div>
       `).join('');
@@ -108,86 +131,75 @@
 
     async function loadCatalog() {
       catalogMsg.textContent = 'Loading sponsor catalog...';
-      try {
-        const data = await Team15.api('/api/driver/catalog');
-        const items = data.items || [];
-        catalogGrid.innerHTML = items.length ? items.map(productCard).join('') : '<div class="small">Your sponsor has not added any products yet.</div>';
-        catalogMsg.textContent = '';
-      } catch (e) {
-        catalogMsg.textContent = e.message;
-      }
+      const data = await Team15.api('/api/driver/catalog');
+      const items = data.items || [];
+      catalogGrid.innerHTML = items.length ? items.map(productCard).join('') : '<div class="small">This sponsor has not added any products yet.</div>';
+      catalogMsg.textContent = '';
     }
 
     async function loadCart() {
-      try {
-        const data = await Team15.api('/api/driver/cart');
-        renderCart(data.items || []);
-      } catch (e) {
-        cartMsg.textContent = e.message;
-      }
+      const data = await Team15.api('/api/driver/cart');
+      renderCart(data.items || []);
     }
 
     async function loadPurchases() {
-      try {
-        const data = await Team15.api('/api/driver/purchases');
-        const purchases = data.purchases || [];
-        purchaseList.innerHTML = purchases.length
-          ? purchases.map(p => `Purchase #${p.purchase_id} · ${p.purchase_status} · ${Number(p.total_points || 0).toLocaleString()} pts · ${new Date(p.created_at).toLocaleString()}`).join('<br>')
-          : 'No purchases yet.';
-      } catch (e) {
-        purchaseList.textContent = e.message;
-      }
+      const data = await Team15.api('/api/driver/purchases');
+      const purchases = data.purchases || [];
+      purchaseList.innerHTML = purchases.length
+        ? purchases.map(p => `${esc(p.org_name || ('Org ' + p.org_id))} · Purchase #${p.purchase_id} · ${esc(p.purchase_status)} · ${Number(p.total_points || 0).toLocaleString()} pts · ${new Date(p.created_at).toLocaleString()}`).join('<br>')
+        : 'No purchases yet.';
+    }
+
+    async function switchSponsor() {
+      const orgId = Number(sponsorSelect.value || 0);
+      if (!orgId) return;
+      await Team15.api('/api/driver/select-sponsor', {
+        method: 'POST',
+        body: JSON.stringify({ org_id: orgId })
+      });
+      switchMsg.textContent = 'Sponsor switched. Cart was reset to prevent cross-sponsor mixing.';
+      await refreshAll();
     }
 
     async function addToCart(itemId) {
-      try {
-        const data = await Team15.api('/api/driver/cart/items', {
-          method: 'POST',
-          body: JSON.stringify({ item_id: itemId, quantity: 1 })
-        });
-        renderCart(data.items || []);
-        cartMsg.textContent = 'Item added after live price/availability check.';
-      } catch (e) {
-        cartMsg.textContent = e.message;
-      }
+      const data = await Team15.api('/api/driver/cart/items', {
+        method: 'POST',
+        body: JSON.stringify({ item_id: itemId, quantity: 1 })
+      });
+      renderCart(data.items || []);
+      cartMsg.textContent = 'Item added after live price and availability check.';
     }
 
     async function updateQty(itemId, qty) {
-      try {
-        const data = await Team15.api(`/api/driver/cart/items/${itemId}`, {
-          method: 'PUT',
-          body: JSON.stringify({ quantity: Number(qty) || 1 })
-        });
-        renderCart(data.items || []);
-      } catch (e) {
-        cartMsg.textContent = e.message;
-      }
+      const data = await Team15.api(`/api/driver/cart/items/${itemId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ quantity: Number(qty) || 1 })
+      });
+      renderCart(data.items || []);
     }
 
     async function removeFromCart(itemId) {
-      try {
-        const data = await Team15.api(`/api/driver/cart/items/${itemId}`, { method: 'DELETE' });
-        renderCart(data.items || []);
-      } catch (e) {
-        cartMsg.textContent = e.message;
-      }
+      const data = await Team15.api(`/api/driver/cart/items/${itemId}`, { method: 'DELETE' });
+      renderCart(data.items || []);
     }
 
     async function checkout() {
       cartMsg.textContent = 'Submitting purchase...';
-      try {
-        const data = await Team15.api('/api/driver/cart/checkout', { method: 'POST' });
-        cartMsg.textContent = `Purchase submitted. Order #${data.purchase_id} used ${Number(data.total_points || 0).toLocaleString()} points and is now ${data.purchase_status || 'PENDING'}.`;
-        await loadCart();
-        await loadPurchases();
-      } catch (e) {
-        cartMsg.textContent = e.message;
-      }
+      const data = await Team15.api('/api/driver/cart/checkout', { method: 'POST' });
+      cartMsg.textContent = `Purchase submitted. Order #${data.purchase_id} used ${Number(data.total_points || 0).toLocaleString()} points and is now ${data.purchase_status || 'PENDING'}.`;
+      await refreshAll();
     }
 
     window.addToCart = addToCart;
     window.updateQty = updateQty;
     window.removeFromCart = removeFromCart;
+
+    async function refreshAll() {
+      await loadMemberships();
+      await loadCatalog();
+      await loadCart();
+      await loadPurchases();
+    }
 
     async function init() {
       const me = await Team15.loadMe();
@@ -195,18 +207,17 @@
       if (me.role !== 'driver') return window.location.href = `/${me.role}/dashboard.html`;
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
       welcome.textContent = `Signed in as ${me.email}`;
-      await loadCatalog();
-      await loadCart();
-      await loadPurchases();
+      await refreshAll();
     }
 
-    Team15.qs('#checkoutBtn').addEventListener('click', checkout);
+    Team15.qs('#switchSponsorBtn').addEventListener('click', () => switchSponsor().catch(e => switchMsg.textContent = e.message));
+    Team15.qs('#checkoutBtn').addEventListener('click', () => checkout().catch(e => cartMsg.textContent = e.message));
     Team15.qs('#logoutBtn').addEventListener('click', async () => {
       await Team15.api('/api/logout', { method: 'POST' });
       window.location.href = '/';
     });
 
-    init();
+    init().catch(e => { switchMsg.textContent = e.message; });
   </script>
 </body>
 </html>
