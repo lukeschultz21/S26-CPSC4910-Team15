@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sponsor Bulk Load</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <div class="nav">
+      <div class="brand">
+        <a href="/dashboard" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
+        <span class="pill">Sponsor</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/sponsor/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/sponsor/catalog.html">Catalog</a>
+        <a class="btn ghost" href="/sponsor/driver-balances.html">Driver Balances</a>
+        <a class="btn ghost" href="/sponsor/reports.html">Reports</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 8px">Sponsor Bulk Loading</h2>
+      <p class="sub" style="margin:0 0 12px">Upload a pipe-delimited text file to create sponsor users, create drivers, or add points to drivers in your own organization.</p>
+      <div class="small" id="who"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Rules summary</h3>
+      <ul class="sub" style="margin:10px 0 0 18px">
+        <li>Use only <strong>D</strong> and <strong>S</strong> records.</li>
+        <li>Organization field is ignored for sponsor uploads.</li>
+        <li>Sponsor records cannot receive points. If points are present, the line is flagged and those fields are ignored.</li>
+        <li>Driver records can create a new driver or add points to an existing driver in your organization.</li>
+        <li>If points are present, a reason is required.</li>
+      </ul>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Upload file</h3>
+      <input type="file" id="fileInput" accept=".txt,.csv" />
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px">
+        <button class="btn" id="uploadBtn">Process Upload</button>
+        <button class="btn ghost" id="sampleBtn">Load Sample Into Preview</button>
+      </div>
+      <div class="msg" id="msg" style="margin-top:12px"></div>
+      <textarea id="samplePreview" class="input" style="margin-top:12px; min-height:140px; width:100%" spellcheck="false" placeholder="Optional preview area for sample file"></textarea>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Sample sponsor file</h3>
+      <pre id="sampleText" style="white-space:pre-wrap; margin:0">D||Joe|Driver|me@email.com||
+S||Jill|Sponsor|jill@mail.com|100|New Driver
+D||Tom|Smith|tom887@gmail.com
+D||New|Driver|some@email.com</pre>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Upload Summary</h3>
+      <div id="summary" class="small">No upload has been processed yet.</div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Created Accounts</h3>
+      <div style="overflow:auto">
+        <table class="table" id="createdTable">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Organization</th>
+              <th>Temporary Password</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="4" class="small">No accounts created yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">Line Results</h3>
+      <div style="overflow:auto">
+        <table class="table" id="resultsTable">
+          <thead>
+            <tr>
+              <th>Line</th>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Action</th>
+              <th>Warnings / Errors</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="5" class="small">No results yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    const msg = document.getElementById("msg");
+    const who = document.getElementById("who");
+    const fileInput = document.getElementById("fileInput");
+    const summary = document.getElementById("summary");
+    const resultsBody = document.querySelector("#resultsTable tbody");
+    const createdBody = document.querySelector("#createdTable tbody");
+    const samplePreview = document.getElementById("samplePreview");
+    const sampleText = document.getElementById("sampleText").textContent.trim();
+
+    function esc(value) {
+      return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function renderSummary(data) {
+      const s = data.summary || {};
+      summary.innerHTML = `
+        <strong>Total lines:</strong> ${s.total_lines ?? 0}
+        &nbsp; | &nbsp; <strong>Success:</strong> ${s.successful_lines ?? 0}
+        &nbsp; | &nbsp; <strong>Warnings:</strong> ${s.warning_lines ?? 0}
+        &nbsp; | &nbsp; <strong>Errors:</strong> ${s.error_lines ?? 0}
+        &nbsp; | &nbsp; <strong>Skipped:</strong> ${s.skipped_lines ?? 0}
+      `;
+    }
+
+    function renderCreatedAccounts(accounts) {
+      if (!accounts || !accounts.length) {
+        createdBody.innerHTML = '<tr><td colspan="4" class="small">No new accounts were created.</td></tr>';
+        return;
+      }
+      createdBody.innerHTML = accounts.map((item) => `
+        <tr>
+          <td>${esc(item.email)}</td>
+          <td>${esc(item.role)}</td>
+          <td>${esc(item.org_name)}</td>
+          <td><code>${esc(item.temp_password)}</code></td>
+        </tr>
+      `).join("");
+    }
+
+    function renderResults(results) {
+      if (!results || !results.length) {
+        resultsBody.innerHTML = '<tr><td colspan="5" class="small">No results returned.</td></tr>';
+        return;
+      }
+      resultsBody.innerHTML = results.map((row) => {
+        const notes = [...(row.warnings || []), ...(row.errors || [])];
+        return `
+          <tr>
+            <td>${row.line_number}</td>
+            <td>${esc(row.status)}</td>
+            <td>${esc(row.type || "")}</td>
+            <td>${esc(row.action || "")}</td>
+            <td>${notes.length ? notes.map(esc).join("<br>") : '<span class="small">—</span>'}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = "/login.html";
+      if (me.role !== "sponsor") return window.location.href = `/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
+      who.textContent = `Signed in as ${me.email}`;
+    }
+
+    document.getElementById("sampleBtn").addEventListener("click", () => {
+      samplePreview.value = sampleText;
+    });
+
+    document.getElementById("uploadBtn").addEventListener("click", async () => {
+      msg.textContent = "";
+      const file = fileInput.files[0];
+
+      let uploadFile = file;
+      if (!uploadFile && samplePreview.value.trim()) {
+        uploadFile = new File([samplePreview.value], "bulk-load-sample.txt", { type: "text/plain" });
+      }
+
+      if (!uploadFile) {
+        msg.textContent = "Choose a file or load/edit the sample preview first.";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+
+      try {
+        const res = await fetch("/api/sponsor/bulk-load", {
+          method: "POST",
+          credentials: "same-origin",
+          body: formData
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+        renderSummary(data);
+        renderCreatedAccounts(data.created_accounts || []);
+        renderResults(data.results || []);
+        msg.textContent = "Bulk load processed.";
+      } catch (error) {
+        msg.textContent = error.message;
+      }
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      await Team15.api("/api/logout", { method: "POST" });
+      window.location.href = "/";
+    });
+
+    init();
+  </script>
+</body>
+</html>
