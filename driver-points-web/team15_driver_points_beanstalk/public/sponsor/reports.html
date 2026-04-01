@@ -24,6 +24,7 @@
     <div class="card">
       <h2 style="margin:0 0 6px">Sponsor Reports</h2>
       <p class="sub">Read-only sponsor reports built on top of your existing balances, transactions, purchases, and summary views.</p>
+
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
         <button class="btn" data-r="balances">Driver Balances</button>
         <button class="btn" data-r="transactions">Point Transactions</button>
@@ -31,6 +32,26 @@
         <button class="btn" data-r="purchases">Purchase Summary</button>
         <button class="btn" data-r="invoice">Invoice Summary</button>
       </div>
+
+      <div class="row" style="margin-top:14px; gap:10px; align-items:end; flex-wrap:wrap">
+        <div>
+          <label for="driverFilter">Driver Search</label>
+          <input id="driverFilter" placeholder="Name or email" />
+        </div>
+        <div>
+          <label for="startDate">Start Date</label>
+          <input id="startDate" type="date" />
+        </div>
+        <div>
+          <label for="endDate">End Date</label>
+          <input id="endDate" type="date" />
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap">
+          <button class="btn" id="applyFiltersBtn" type="button">Apply Filters</button>
+          <button class="btn ghost" id="downloadCsvBtn" type="button">Download CSV</button>
+        </div>
+      </div>
+
       <div class="msg" id="msg" style="margin-top:10px"></div>
     </div>
 
@@ -51,69 +72,155 @@
     const title = Team15.qs('#title');
     const thead = Team15.qs('#tbl thead');
     const tbody = Team15.qs('#tbl tbody');
+    const driverFilter = Team15.qs('#driverFilter');
+    const startDate = Team15.qs('#startDate');
+    const endDate = Team15.qs('#endDate');
 
-    function esc(s){
+    let currentReport = null;
+    let currentRows = [];
+
+    function esc(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
-    function renderTable(rows){
-      if(!rows || !rows.length){
+    function renderTable(rows) {
+      currentRows = Array.isArray(rows) ? rows : [];
+
+      if (!currentRows.length) {
         thead.innerHTML = '';
         tbody.innerHTML = `<tr><td class="small">No rows</td></tr>`;
         return;
       }
-      const cols = Object.keys(rows[0]);
-      thead.innerHTML = `<tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
-      tbody.innerHTML = rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
+
+      const cols = Object.keys(currentRows[0]);
+      thead.innerHTML = `<tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+      tbody.innerHTML = currentRows.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
     }
 
-    async function init(){
+    function downloadCsv(rows, filename) {
+      if (!rows || !rows.length) {
+        msg.textContent = 'No report data to export.';
+        return;
+      }
+
+      const cols = Object.keys(rows[0]);
+      const csv = [
+        cols.join(','),
+        ...rows.map(row =>
+          cols.map(col => {
+            const value = row[col] ?? '';
+            return `"${String(value).replace(/"/g, '""')}"`;
+          }).join(',')
+        )
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function filterRowsClientSide(rows) {
+      const q = driverFilter.value.trim().toLowerCase();
+      if (!q) return rows;
+
+      return rows.filter(row => {
+        const joined = Object.values(row).join(' ').toLowerCase();
+        return joined.includes(q);
+      });
+    }
+
+    async function loadReport(reportType) {
+      currentReport = reportType;
+      msg.textContent = '';
+
+      try {
+        if (reportType === 'balances') {
+          title.textContent = 'Driver Balances';
+          const data = await Team15.api('/api/sponsor/driver-balances', { method: 'GET' });
+          renderTable(filterRowsClientSide(data.drivers || []));
+          return;
+        }
+
+        if (reportType === 'transactions') {
+          title.textContent = 'Point Transactions';
+
+          const params = new URLSearchParams();
+          if (driverFilter.value.trim()) {
+            const q = driverFilter.value.trim();
+            if (/^\d+$/.test(q)) params.set('driver_user_id', q);
+          }
+          if (startDate.value) params.set('startDate', startDate.value);
+          if (endDate.value) params.set('endDate', endDate.value);
+
+          const qs = params.toString() ? `?${params.toString()}` : '';
+          const data = await Team15.api(`/api/sponsor/driver-point-transactions${qs}`, { method: 'GET' });
+          renderTable(filterRowsClientSide(data.transactions || []));
+          return;
+        }
+
+        if (reportType === 'top-drivers') {
+          title.textContent = 'Top Drivers';
+          const data = await Team15.api('/api/sponsor/reports/top-drivers', { method: 'GET' });
+          renderTable(filterRowsClientSide(data.rows || []));
+          return;
+        }
+
+        if (reportType === 'purchases') {
+          title.textContent = 'Purchase Summary';
+          const data = await Team15.api('/api/sponsor/reports/purchase-summary', { method: 'GET' });
+          renderTable(filterRowsClientSide(data.rows || []));
+          return;
+        }
+
+        if (reportType === 'invoice') {
+          title.textContent = 'Invoice Summary';
+          const data = await Team15.api('/api/sponsor/reports/invoice-summary', { method: 'GET' });
+          renderTable(filterRowsClientSide(data.rows || []));
+        }
+      } catch (err) {
+        msg.textContent = err.message;
+      }
+    }
+
+    async function init() {
       const me = await Team15.loadMe();
-      if(!me) return window.location.href='/login.html';
-      if(me.role !== 'sponsor') return window.location.href=`/${me.role}/dashboard.html`;
+      if (!me) return window.location.href = '/login.html';
+      if (me.role !== 'sponsor') return window.location.href = `/${me.role}/dashboard.html`;
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
       if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
     }
 
-    document.addEventListener('click', async (e)=>{
+    document.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-r]');
-      if(!btn) return;
-      msg.textContent = '';
-      const r = btn.getAttribute('data-r');
-      try{
-        if(r==='balances'){
-          title.textContent = 'Driver Balances';
-          const data = await Team15.api('/api/sponsor/driver-balances', {method:'GET'});
-          renderTable(data.drivers);
-        }
-        if(r==='transactions'){
-          title.textContent = 'Point Transactions';
-          const data = await Team15.api('/api/sponsor/driver-point-transactions', {method:'GET'});
-          renderTable(data.transactions);
-        }
-        if(r==='top-drivers'){
-          title.textContent = 'Top Drivers';
-          const data = await Team15.api('/api/sponsor/reports/top-drivers', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='purchases'){
-          title.textContent = 'Purchase Summary';
-          const data = await Team15.api('/api/sponsor/reports/purchase-summary', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='invoice'){
-          title.textContent = 'Invoice Summary';
-          const data = await Team15.api('/api/sponsor/reports/invoice-summary', {method:'GET'});
-          renderTable(data.rows);
-        }
-      }catch(err){
-        msg.textContent = err.message;
-      }
+      if (!btn) return;
+      await loadReport(btn.getAttribute('data-r'));
     });
 
-    Team15.qs('#logoutBtn').addEventListener('click', async ()=>{
-      await Team15.api('/api/logout', {method:'POST'});
-      window.location.href='/';
+    Team15.qs('#applyFiltersBtn').addEventListener('click', async () => {
+      if (!currentReport) {
+        msg.textContent = 'Select a report first.';
+        return;
+      }
+      await loadReport(currentReport);
+    });
+
+    Team15.qs('#downloadCsvBtn').addEventListener('click', () => {
+      if (!currentReport || !currentRows.length) {
+        msg.textContent = 'Load a report first.';
+        return;
+      }
+      downloadCsv(currentRows, `sponsor_${currentReport}_report.csv`);
+    });
+
+    Team15.qs('#logoutBtn').addEventListener('click', async () => {
+      await Team15.api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
     });
 
     init();
