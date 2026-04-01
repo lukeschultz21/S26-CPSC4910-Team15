@@ -194,7 +194,17 @@
       ]);
       pointsEl.textContent = Number(points.current_points || 0).toLocaleString();
       lifetimeEl.textContent = Number(lifetime.total_points || 0).toLocaleString();
-      conversionEl.textContent = conversion.conversion_rate == null ? 'No sponsor' : `${conversion.conversion_rate}¢ per point`;
+
+      if (conversion.conversion_rate == null) {
+        conversionEl.textContent = 'No sponsor';
+      } else {
+        const centsPerPoint = Math.max(1, Number(conversion.conversion_rate) || 1);
+        const dollarsPerPoint = centsPerPoint / 100;
+        const pointsPerDollar = (100 / centsPerPoint).toFixed(2);
+
+        conversionEl.textContent = `1 point = $${dollarsPerPoint.toFixed(2)} (${pointsPerDollar} points = $1)`;
+      }
+
       if (conversion.org_name) selectedSponsorLabel.textContent = `Current sponsor: ${conversion.org_name}`;
     }
 
