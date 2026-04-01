@@ -1758,6 +1758,82 @@ app.get("/api/sponsor/conversion-rate", requireRole("sponsor"), async (req, res)
   }
 });
 
+app.put("/api/sponsor/conversion-rate", requireRole("sponsor", "admin"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const centsPerPoint = Number(req.body?.conversion_rate);
+
+    if (!Number.isInteger(centsPerPoint) || centsPerPoint <= 0) {
+      return res.status(400).json({ error: "Conversion rate must be a positive integer" });
+    }
+
+    let orgId = null;
+
+    if (req.session.user.role === "sponsor") {
+      orgId = await getSponsorOrgId(pool, req.session.user.user_id);
+      if (!orgId) {
+        return res.status(404).json({ error: "Sponsor organization not found" });
+      }
+    } else if (req.session.user.role === "admin") {
+      orgId = Number(req.body?.org_id);
+      if (!orgId) {
+        return res.status(400).json({ error: "org_id is required for admin updates" });
+      }
+    } else {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT org_id, org_name, cents_per_point
+       FROM SPONSORORGANIZATION
+       WHERE org_id = ?
+       LIMIT 1`,
+      [orgId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: "Organization not found" });
+    }
+
+    const org = rows[0];
+    const oldValue = Number(org.cents_per_point);
+
+    await pool.query(
+      `UPDATE SPONSORORGANIZATION
+       SET cents_per_point = ?
+       WHERE org_id = ?`,
+      [centsPerPoint, orgId]
+    );
+
+    await pool.query(
+      `INSERT INTO AUDITLOG
+         (action_type, actor_user_id, org_id, details, entity_type, entity_id)
+       VALUES
+         (?, ?, ?, ?, ?, ?)`,
+      [
+        "UPDATE_CONVERSION_RATE",
+        req.session.user.user_id,
+        orgId,
+        JSON.stringify({
+          org_name: org.org_name,
+          old_cents_per_point: oldValue,
+          new_cents_per_point: centsPerPoint
+        }),
+        "SPONSORORGANIZATION",
+        orgId
+      ]
+    );
+
+    res.json({
+      ok: true,
+      org_id: orgId,
+      conversion_rate: centsPerPoint
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/sponsor/driver-balances", requireRole("sponsor"), async (req, res) => {
   try {
     const pool = getPool();
@@ -1871,6 +1947,30 @@ app.get("/api/admin/audit-log", requireRole("admin"), async (req, res) => {
     res.json({ ok: true, audit_logs: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/admin/conversion-rate", requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { org_id, conversion_rate } = req.body;
+
+    const centsPerPoint = Number(conversion_rate);
+
+    if (!Number.isInteger(centsPerPoint) || centsPerPoint <= 0) {
+      return res.status(400).json({ error: "Conversion rate must be a positive integer" });
+    }
+
+    await pool.query(
+      `UPDATE SPONSORORGANIZATION SET cents_per_point = ? WHERE org_id = ?`,
+      [centsPerPoint, org_id]
+    );
+
+    res.json({ ok: true });
+
+  } catch (err) {
+    console.error("Admin update conversion rate error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

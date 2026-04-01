@@ -36,6 +36,13 @@
     <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
       <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
       <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
+
+      <!-- NEW: Update Conversion Rate -->
+      <div style="margin-top: 12px; display:flex; gap:8px; align-items:center;">
+        <input id="conversionInput" type="number" min="1" placeholder="Cents per point" style="width:160px;" />
+        <button class="btn" id="updateConversionBtn">Update</button>
+      </div>
+      <div class="msg" id="conversionMsg"></div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -110,6 +117,8 @@
   <script>
     const welcome = Team15.qs("#welcome");
     const conversionEl = Team15.qs("#conversionRate");
+    const conversionInput = Team15.qs("#conversionInput");
+    const conversionMsg = Team15.qs("#conversionMsg");
     const promoInput = Team15.qs("#promo");
     const promoMsg = Team15.qs("#promoMsg");
     const createDriverEmail = Team15.qs("#driverEmail");
@@ -193,7 +202,11 @@ async function rejectApplication(applicationId) {
 
       try {
         const data = await Team15.api("/api/sponsor/conversion-rate", { method: "GET" });
-        conversionEl.textContent = `${data.conversion_rate} points = $1`;
+        const centsPerPoint = Math.max(1, Number(data.conversion_rate) || 1);
+        const dollarsPerPoint = centsPerPoint / 100;
+        const pointsPerDollar = Math.round(100 / centsPerPoint);
+
+        conversionEl.textContent = `1 point = $${dollarsPerPoint.toFixed(2)} (${pointsPerDollar} points = $1)`;
       } catch (e) {
         msg.textContent = e.message;
       }
@@ -267,26 +280,61 @@ Team15.qs("#createDriverBtn").addEventListener("click", async () => {
   }
 });
 
-    Team15.qs("#promoBtn").addEventListener("click", async () => {
-      promoMsg.textContent = "";
-      const identifier = promoInput.value.trim();
-      if (!identifier) return (promoMsg.textContent = "Enter a username, email, or user id");
+Team15.qs("#updateConversionBtn").addEventListener("click", async () => {
+  conversionMsg.textContent = "";
 
-      try {
-        await Team15.api("/api/sponsor/make-sponsor", {
-          method: "POST",
-          body: JSON.stringify({ identifier })
-        });
-        promoMsg.style.color = "#b8c3e6";
-        promoMsg.textContent = `Promoted ${identifier} to sponsor.`;
-        promoInput.value = "";
-      } catch (e) {
-        promoMsg.style.color = "var(--danger)";
-        promoMsg.textContent = e.message;
-      }
+  const value = Number(conversionInput.value);
+
+  if (!Number.isInteger(value) || value <= 0) {
+    conversionMsg.style.color = "var(--danger)";
+    conversionMsg.textContent = "Enter a valid positive integer";
+    return;
+  }
+
+  try {
+    await Team15.api("/api/sponsor/conversion-rate", {
+      method: "PUT",
+      body: JSON.stringify({
+        conversion_rate: value
+      })
     });
 
-    init();
-  </script>
+    conversionMsg.style.color = "#b8c3e6";
+    conversionMsg.textContent = "Conversion rate updated successfully";
+
+    const dollarsPerPoint = value / 100;
+    const pointsPerDollar = (100 / value).toFixed(2);
+
+    conversionEl.textContent = `1 point = $${dollarsPerPoint.toFixed(2)} (${pointsPerDollar} points = $1)`;
+
+    conversionInput.value = "";
+
+  } catch (e) {
+    conversionMsg.style.color = "var(--danger)";
+    conversionMsg.textContent = e.message;
+  }
+});
+
+Team15.qs("#promoBtn").addEventListener("click", async () => {
+  promoMsg.textContent = "";
+  const identifier = promoInput.value.trim();
+  if (!identifier) return (promoMsg.textContent = "Enter a username, email, or user id");
+
+  try {
+    await Team15.api("/api/sponsor/make-sponsor", {
+      method: "POST",
+      body: JSON.stringify({ identifier })
+    });
+    promoMsg.style.color = "#b8c3e6";
+    promoMsg.textContent = `Promoted ${identifier} to sponsor.`;
+    promoInput.value = "";
+  } catch (e) {
+    promoMsg.style.color = "var(--danger)";
+    promoMsg.textContent = e.message;
+  }
+});
+
+init();
+</script>
 </body>
 </html>
