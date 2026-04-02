@@ -1547,6 +1547,9 @@ app.put("/api/driver/points", requireRole("sponsor", "admin"), async (req, res) 
   }
 });
 
+// ============================================================
+// JOIN sponsor_name onto transactions query
+// ============================================================
 app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
   try {
     const pool = getPool();
@@ -1554,12 +1557,18 @@ app.get("/api/driver/transactions", requireRole("driver"), async (req, res) => {
 
     const orgId = await getDriverSelectedOrgId(pool, req);
     const params = [userId];
-    let sql = "SELECT * FROM POINTTRANSACTIONS WHERE user_id = ?";
+    let sql = `
+      SELECT pt.*,
+             CONCAT(COALESCE(au.first_name, ''), ' ', COALESCE(au.last_name, '')) AS sponsor_name
+      FROM POINTTRANSACTIONS pt
+      LEFT JOIN USERS au ON au.user_id = pt.actor_user_id
+      WHERE pt.user_id = ?
+    `;
     if (orgId) {
-      sql += " AND org_id = ?";
+      sql += " AND pt.org_id = ?";
       params.push(orgId);
     }
-    sql += " ORDER BY created_at DESC LIMIT 25";
+    sql += " ORDER BY pt.created_at DESC LIMIT 25";
     const [rows] = await pool.query(sql, params);
 
     res.json({ ok: true, transactions: rows, org_id: orgId });
@@ -1601,6 +1610,66 @@ app.post("/api/driver/notifications/read-all", requireRole("driver"), async (req
     const userId = req.session.user.user_id;
     await pool.query("UPDATE NOTIFICATIONS SET is_read = 1 WHERE user_id = ?", [userId]);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// Sprint 8, Story 1: GET/PUT notification preferences
+// ============================================================
+app.get("/api/driver/notification-preferences", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+
+    // Attempt to read from a DRIVERNOTIFICATIONPREFS table; fall back gracefully if it doesn't exist yet
+    try {
+      const [rows] = await pool.query(
+        `SELECT point_charge_alerts_enabled
+         FROM DRIVERNOTIFICATIONPREFS
+         WHERE user_id = ?
+         LIMIT 1`,
+        [userId]
+      );
+      if (rows.length) {
+        return res.json({ ok: true, point_charge_alerts_enabled: !!rows[0].point_charge_alerts_enabled });
+      }
+      // No row yet — return default (enabled)
+      return res.json({ ok: true, point_charge_alerts_enabled: true });
+    } catch (_) {
+      // Table doesn't exist yet — return default
+      return res.json({ ok: true, point_charge_alerts_enabled: true });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/driver/notification-preferences", requireRole("driver"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const userId = req.session.user.user_id;
+    const enabled = req.body?.point_charge_alerts_enabled ? 1 : 0;
+
+    // Ensure the table exists (idempotent migration)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS DRIVERNOTIFICATIONPREFS (
+        user_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+        point_charge_alerts_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_dnp_user FOREIGN KEY (user_id) REFERENCES USERS(user_id)
+      )
+    `);
+
+    await pool.query(
+      `INSERT INTO DRIVERNOTIFICATIONPREFS (user_id, point_charge_alerts_enabled)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE point_charge_alerts_enabled = VALUES(point_charge_alerts_enabled)`,
+      [userId, enabled]
+    );
+
+    res.json({ ok: true, point_charge_alerts_enabled: !!enabled });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

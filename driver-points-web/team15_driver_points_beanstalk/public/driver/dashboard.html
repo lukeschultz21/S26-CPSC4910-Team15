@@ -115,6 +115,8 @@
             <th>Sponsor</th>
             <th>Points</th>
             <th>Reason</th>
+            <!-- Sprint 8, Task 2b: Show who manually adjusted points -->
+            <th>Adjusted By</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -201,7 +203,6 @@
         const centsPerPoint = Math.max(1, Number(conversion.conversion_rate) || 1);
         const dollarsPerPoint = centsPerPoint / 100;
         const pointsPerDollar = (100 / centsPerPoint).toFixed(2);
-
         conversionEl.textContent = `1 point = $${dollarsPerPoint.toFixed(2)} (${pointsPerDollar} points = $1)`;
       }
 
@@ -273,11 +274,14 @@
     function renderRow(tx) {
       const sponsor = memberships.find(m => Number(m.org_id) === Number(tx.org_id));
       const cls = Number(tx.point_change || 0) >= 0 ? 'point-plus' : 'point-minus';
+      // Display sponsor name who manually adjusted points
+      const adjustedBy = tx.sponsor_name ? esc(tx.sponsor_name) : '<span style="opacity:0.4">—</span>';
       return `<tr>
         <td>${formatDate(tx.created_at)}</td>
         <td>${esc(sponsor?.org_name || ('Org ' + (tx.org_id ?? '')))}</td>
         <td class="${cls}">${Number(tx.point_change || 0) > 0 ? '+' : ''}${Number(tx.point_change || 0)}</td>
         <td>${esc(tx.reason || '')}</td>
+        <td>${adjustedBy}</td>
       </tr>`;
     }
 
@@ -289,7 +293,7 @@
         : '/api/driver/transactions';
       const data = await Team15.api(url);
       const rows = data.transactions || [];
-      tbody.innerHTML = rows.length ? rows.map(renderRow).join('') : '<tr><td colspan="4" class="small">No transactions found.</td></tr>';
+      tbody.innerHTML = rows.length ? rows.map(renderRow).join('') : '<tr><td colspan="5" class="small">No transactions found.</td></tr>';
       historyMsg.textContent = filtered ? `Showing ${rows.length} transaction(s).` : '';
     }
 
