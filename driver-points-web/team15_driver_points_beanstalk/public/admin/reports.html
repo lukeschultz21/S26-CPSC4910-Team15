@@ -15,6 +15,7 @@
       </div>
       <div class="navlinks">
         <a class="btn ghost" href="/admin/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/admin/audit-log.html">Audit Page</a>
         <a class="btn ghost" href="/change-password.html">Change Password</a>
         <button class="btn" id="logoutBtn">Logout</button>
       </div>
@@ -22,7 +23,7 @@
 
     <div class="card">
       <h2 style="margin:0 0 6px">Admin Reports</h2>
-      <p class="sub">These reports satisfy the "generate admin reports" requirement. Use filters in your DB queries later if needed.</p>
+      <p class="sub">Summary and detailed reporting for sponsors, drivers, invoices, and audit activity.</p>
 
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
         <button class="btn" data-r="users">Users by Role</button>
@@ -30,7 +31,52 @@
         <button class="btn" data-r="points">Points Summary</button>
         <button class="btn" data-r="sales-sponsor">Sales by Sponsor</button>
         <button class="btn" data-r="sales-driver">Sales by Driver</button>
-        <button class="btn" data-r="audit">Audit Summary</button>
+        <button class="btn" data-r="invoices">Sponsor Invoices</button>
+        <button class="btn" data-r="audit">Audit Log</button>
+      </div>
+
+      <div class="row" style="margin-top:14px; gap:10px; align-items:end; flex-wrap:wrap">
+        <div>
+          <label for="orgIdFilter">Sponsor ID</label>
+          <input id="orgIdFilter" type="number" min="1" placeholder="All sponsors" />
+        </div>
+        <div>
+          <label for="driverIdFilter">Driver ID</label>
+          <input id="driverIdFilter" type="number" min="1" placeholder="All drivers" />
+        </div>
+        <div>
+          <label for="startDate">Start Date</label>
+          <input id="startDate" type="date" />
+        </div>
+        <div>
+          <label for="endDate">End Date</label>
+          <input id="endDate" type="date" />
+        </div>
+        <div>
+          <label for="actionType">Audit Category</label>
+          <select id="actionType">
+            <option value="">All</option>
+            <option value="POINT_CHANGE">POINT_CHANGE</option>
+            <option value="LOGIN_ATTEMPT">LOGIN_ATTEMPT</option>
+            <option value="PASSWORD_CHANGE">PASSWORD_CHANGE</option>
+            <option value="DRIVER_APP_SUBMITTED">DRIVER_APP_SUBMITTED</option>
+            <option value="DRIVER_APP_STATUS_CHANGE">DRIVER_APP_STATUS_CHANGE</option>
+            <option value="BULK_CREATE_DRIVER">BULK_CREATE_DRIVER</option>
+            <option value="BULK_CREATE_SPONSOR">BULK_CREATE_SPONSOR</option>
+            <option value="BULK_CREATE_ORG">BULK_CREATE_ORG</option>
+          </select>
+        </div>
+        <div>
+          <label for="viewMode">View</label>
+          <select id="viewMode">
+            <option value="summary">Summary</option>
+            <option value="detailed">Detailed</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap">
+          <button class="btn" id="applyFiltersBtn" type="button">Apply Filters</button>
+          <button class="btn ghost" id="downloadCsvBtn" type="button">Download CSV</button>
+        </div>
       </div>
 
       <div class="msg" id="msg" style="margin-top:10px"></div>
@@ -38,6 +84,7 @@
 
     <div class="card" style="margin-top:18px">
       <h3 style="margin:0 0 10px" id="title">Select a report</h3>
+      <div class="small" id="subtitle" style="margin-bottom:10px"></div>
       <div style="overflow:auto">
         <table class="table" id="tbl">
           <thead></thead>
@@ -51,22 +98,143 @@
   <script>
     const msg = Team15.qs('#msg');
     const title = Team15.qs('#title');
+    const subtitle = Team15.qs('#subtitle');
     const thead = Team15.qs('#tbl thead');
     const tbody = Team15.qs('#tbl tbody');
+    const orgIdFilter = Team15.qs('#orgIdFilter');
+    const driverIdFilter = Team15.qs('#driverIdFilter');
+    const startDate = Team15.qs('#startDate');
+    const endDate = Team15.qs('#endDate');
+    const actionType = Team15.qs('#actionType');
+    const viewMode = Team15.qs('#viewMode');
+
+    let currentReport = null;
+    let currentRows = [];
 
     function esc(s){
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
     function renderTable(rows){
-      if(!rows || !rows.length){
+      currentRows = Array.isArray(rows) ? rows : [];
+      if(!currentRows.length){
         thead.innerHTML = '';
         tbody.innerHTML = `<tr><td class="small">No rows</td></tr>`;
         return;
       }
-      const cols = Object.keys(rows[0]);
+      const cols = Object.keys(currentRows[0]);
       thead.innerHTML = `<tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>`;
-      tbody.innerHTML = rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
+      tbody.innerHTML = currentRows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
+    }
+
+    function downloadCsv(rows, filename) {
+      if (!rows || !rows.length) {
+        msg.textContent = 'No report data to export.';
+        return;
+      }
+      const cols = Object.keys(rows[0]);
+      const csv = [
+        cols.join(','),
+        ...rows.map(row => cols.map(col => `"${String(row[col] ?? '').replace(/"/g, '""')}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    function buildParams(reportType) {
+      const params = new URLSearchParams();
+      const orgId = orgIdFilter.value.trim();
+      const driverId = driverIdFilter.value.trim();
+
+      if (orgId) params.set('org_id', orgId);
+      if (startDate.value) params.set('startDate', startDate.value);
+      if (endDate.value) params.set('endDate', endDate.value);
+
+      if (reportType === 'sales-driver' || reportType === 'invoices') {
+        if (driverId && reportType === 'sales-driver') params.set('driver_user_id', driverId);
+      }
+
+      if (reportType === 'sales-sponsor' || reportType === 'sales-driver' || reportType === 'audit') {
+        params.set('view', viewMode.value);
+      }
+
+      if (reportType === 'audit' && actionType.value) {
+        params.set('actionType', actionType.value);
+      }
+
+      return params;
+    }
+
+    async function loadReport(reportType){
+      currentReport = reportType;
+      msg.textContent = '';
+      subtitle.textContent = '';
+
+      try{
+        if(reportType==='users'){
+          title.textContent = 'Users by Role';
+          subtitle.textContent = 'System-wide user counts by role.';
+          const data = await Team15.api('/api/admin/reports/users-by-role', {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+        if(reportType==='drivers'){
+          title.textContent = 'Drivers';
+          subtitle.textContent = 'Driver roster with sponsor and balance information.';
+          const data = await Team15.api('/api/admin/reports/drivers', {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+        if(reportType==='points'){
+          title.textContent = 'Points Summary';
+          subtitle.textContent = 'Current balances across drivers and sponsors.';
+          const data = await Team15.api('/api/admin/reports/points', {method:'GET'});
+          renderTable((data.balances && data.balances.length) ? data.balances : (data.totals || []));
+          return;
+        }
+        if(reportType==='sales-sponsor'){
+          title.textContent = 'Sales by Sponsor';
+          subtitle.textContent = `Filtered ${viewMode.value} report by sponsor and date range.`;
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/admin/reports/sales-by-sponsor${params ? `?${params}` : ''}`, {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+        if(reportType==='sales-driver'){
+          title.textContent = 'Sales by Driver';
+          subtitle.textContent = `Filtered ${viewMode.value} report by sponsor, driver, and date range.`;
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/admin/reports/sales-by-driver${params ? `?${params}` : ''}`, {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+        if(reportType==='invoices'){
+          title.textContent = 'Sponsor Invoices';
+          subtitle.textContent = 'One row per driver within a sponsor invoice. Includes fee by driver and total fee due for sponsor.';
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/admin/reports/invoices${params ? `?${params}` : ''}`, {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+        if(reportType==='audit'){
+          title.textContent = viewMode.value === 'detailed' ? 'Audit Log Detail' : 'Audit Log Summary';
+          subtitle.textContent = 'Filtered by sponsor, date range, and audit category.';
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/admin/reports/audit-log${params ? `?${params}` : ''}`, {method:'GET'});
+          renderTable(data.rows || []);
+          return;
+        }
+      }catch(err){
+        msg.textContent = err.message;
+      }
     }
 
     async function init(){
@@ -74,49 +242,29 @@
       if(!me) return window.location.href='/login.html';
       if(me.role !== 'admin') return window.location.href=`/${me.role}/dashboard.html`;
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
     }
 
     document.addEventListener('click', async (e)=>{
       const btn = e.target.closest('button[data-r]');
       if(!btn) return;
-      msg.textContent = '';
-      const r = btn.getAttribute('data-r');
-      try{
-        if(r==='users'){
-          title.textContent = 'Users by Role';
-          const data = await Team15.api('/api/admin/reports/users-by-role', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='drivers'){
-          title.textContent = 'Drivers';
-          const data = await Team15.api('/api/admin/reports/drivers', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='points'){
-          title.textContent = 'Points Summary (balances + totals)';
-          const data = await Team15.api('/api/admin/reports/points', {method:'GET'});
-          // show balances if available, else totals
-          const rows = (data.balances && data.balances.length) ? data.balances : data.totals;
-          renderTable(rows);
-        }
-        if(r==='sales-sponsor'){
-          title.textContent = 'Sales by Sponsor';
-          const data = await Team15.api('/api/admin/reports/sales-by-sponsor', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='sales-driver'){
-          title.textContent = 'Sales by Driver';
-          const data = await Team15.api('/api/admin/reports/sales-by-driver', {method:'GET'});
-          renderTable(data.rows);
-        }
-        if(r==='audit'){
-          title.textContent = 'Audit Summary';
-          const data = await Team15.api('/api/admin/reports/audit-log', {method:'GET'});
-          renderTable(data.rows);
-        }
-      }catch(err){
-        msg.textContent = err.message;
+      await loadReport(btn.getAttribute('data-r'));
+    });
+
+    Team15.qs('#applyFiltersBtn').addEventListener('click', async ()=>{
+      if(!currentReport){
+        msg.textContent = 'Select a report first.';
+        return;
       }
+      await loadReport(currentReport);
+    });
+
+    Team15.qs('#downloadCsvBtn').addEventListener('click', ()=>{
+      if(!currentReport || !currentRows.length){
+        msg.textContent = 'Load a report first.';
+        return;
+      }
+      downloadCsv(currentRows, `admin_${currentReport}_report.csv`);
     });
 
     Team15.qs('#logoutBtn').addEventListener('click', async ()=>{

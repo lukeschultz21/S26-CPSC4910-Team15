@@ -23,20 +23,22 @@
 
     <div class="card">
       <h2 style="margin:0 0 6px">Sponsor Reports</h2>
-      <p class="sub">Read-only sponsor reports built on top of your existing balances, transactions, purchases, and summary views.</p>
+      <p class="sub">Driver point tracking, purchase summaries, invoice totals, and sponsor-restricted audit activity.</p>
 
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px">
+        <button class="btn" data-r="point-tracking">Driver Point Tracking</button>
         <button class="btn" data-r="balances">Driver Balances</button>
         <button class="btn" data-r="transactions">Point Transactions</button>
         <button class="btn" data-r="top-drivers">Top Drivers</button>
         <button class="btn" data-r="purchases">Purchase Summary</button>
         <button class="btn" data-r="invoice">Invoice Summary</button>
+        <button class="btn" data-r="audit">Audit Log</button>
       </div>
 
       <div class="row" style="margin-top:14px; gap:10px; align-items:end; flex-wrap:wrap">
         <div>
-          <label for="driverFilter">Driver Search</label>
-          <input id="driverFilter" placeholder="Name or email" />
+          <label for="driverFilter">Driver Search or ID</label>
+          <input id="driverFilter" placeholder="Name, email, or driver id" />
         </div>
         <div>
           <label for="startDate">Start Date</label>
@@ -45,6 +47,26 @@
         <div>
           <label for="endDate">End Date</label>
           <input id="endDate" type="date" />
+        </div>
+        <div>
+          <label for="actionType">Audit Category</label>
+          <select id="actionType">
+            <option value="">All</option>
+            <option value="POINT_CHANGE">POINT_CHANGE</option>
+            <option value="LOGIN_ATTEMPT">LOGIN_ATTEMPT</option>
+            <option value="PASSWORD_CHANGE">PASSWORD_CHANGE</option>
+            <option value="DRIVER_APP_SUBMITTED">DRIVER_APP_SUBMITTED</option>
+            <option value="DRIVER_APP_STATUS_CHANGE">DRIVER_APP_STATUS_CHANGE</option>
+            <option value="BULK_CREATE_DRIVER">BULK_CREATE_DRIVER</option>
+            <option value="BULK_CREATE_SPONSOR">BULK_CREATE_SPONSOR</option>
+          </select>
+        </div>
+        <div>
+          <label for="viewMode">View</label>
+          <select id="viewMode">
+            <option value="detailed">Detailed</option>
+            <option value="summary">Summary</option>
+          </select>
         </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap">
           <button class="btn" id="applyFiltersBtn" type="button">Apply Filters</button>
@@ -57,6 +79,7 @@
 
     <div class="card" style="margin-top:18px">
       <h3 style="margin:0 0 10px" id="title">Select a report</h3>
+      <div class="small" id="subtitle" style="margin-bottom:10px"></div>
       <div style="overflow:auto">
         <table class="table" id="tbl">
           <thead></thead>
@@ -70,11 +93,14 @@
   <script>
     const msg = Team15.qs('#msg');
     const title = Team15.qs('#title');
+    const subtitle = Team15.qs('#subtitle');
     const thead = Team15.qs('#tbl thead');
     const tbody = Team15.qs('#tbl tbody');
     const driverFilter = Team15.qs('#driverFilter');
     const startDate = Team15.qs('#startDate');
     const endDate = Team15.qs('#endDate');
+    const actionType = Team15.qs('#actionType');
+    const viewMode = Team15.qs('#viewMode');
 
     let currentReport = null;
     let currentRows = [];
@@ -85,13 +111,11 @@
 
     function renderTable(rows) {
       currentRows = Array.isArray(rows) ? rows : [];
-
       if (!currentRows.length) {
         thead.innerHTML = '';
         tbody.innerHTML = `<tr><td class="small">No rows</td></tr>`;
         return;
       }
-
       const cols = Object.keys(currentRows[0]);
       thead.innerHTML = `<tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
       tbody.innerHTML = currentRows.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join('')}</tr>`).join('');
@@ -102,16 +126,10 @@
         msg.textContent = 'No report data to export.';
         return;
       }
-
       const cols = Object.keys(rows[0]);
       const csv = [
         cols.join(','),
-        ...rows.map(row =>
-          cols.map(col => {
-            const value = row[col] ?? '';
-            return `"${String(value).replace(/"/g, '""')}"`;
-          }).join(',')
-        )
+        ...rows.map(row => cols.map(col => `"${String(row[col] ?? '').replace(/"/g, '""')}"`).join(','))
       ].join('\n');
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -127,21 +145,39 @@
 
     function filterRowsClientSide(rows) {
       const q = driverFilter.value.trim().toLowerCase();
-      if (!q) return rows;
+      if (!q || /^\d+$/.test(q)) return rows;
+      return rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(q));
+    }
 
-      return rows.filter(row => {
-        const joined = Object.values(row).join(' ').toLowerCase();
-        return joined.includes(q);
-      });
+    function buildParams(reportType) {
+      const params = new URLSearchParams();
+      const q = driverFilter.value.trim();
+      if (/^\d+$/.test(q)) params.set('driver_user_id', q);
+      if (startDate.value) params.set('startDate', startDate.value);
+      if (endDate.value) params.set('endDate', endDate.value);
+      if (reportType === 'point-tracking') params.set('view', viewMode.value);
+      if (reportType === 'audit' && actionType.value) params.set('actionType', actionType.value);
+      return params;
     }
 
     async function loadReport(reportType) {
       currentReport = reportType;
       msg.textContent = '';
+      subtitle.textContent = '';
 
       try {
+        if (reportType === 'point-tracking') {
+          title.textContent = viewMode.value === 'summary' ? 'Driver Point Tracking Summary' : 'Driver Point Tracking Detail';
+          subtitle.textContent = 'Shows driver, total points, point changes, change date, sponsor, and reason.';
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/sponsor/reports/driver-point-tracking${params ? `?${params}` : ''}`, { method: 'GET' });
+          renderTable(filterRowsClientSide(data.rows || []));
+          return;
+        }
+
         if (reportType === 'balances') {
           title.textContent = 'Driver Balances';
+          subtitle.textContent = 'Current approved driver balances for this sponsor.';
           const data = await Team15.api('/api/sponsor/driver-balances', { method: 'GET' });
           renderTable(filterRowsClientSide(data.drivers || []));
           return;
@@ -149,23 +185,16 @@
 
         if (reportType === 'transactions') {
           title.textContent = 'Point Transactions';
-
-          const params = new URLSearchParams();
-          if (driverFilter.value.trim()) {
-            const q = driverFilter.value.trim();
-            if (/^\d+$/.test(q)) params.set('driver_user_id', q);
-          }
-          if (startDate.value) params.set('startDate', startDate.value);
-          if (endDate.value) params.set('endDate', endDate.value);
-
-          const qs = params.toString() ? `?${params.toString()}` : '';
-          const data = await Team15.api(`/api/sponsor/driver-point-transactions${qs}`, { method: 'GET' });
+          subtitle.textContent = 'Existing transaction-level history for this sponsor.';
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/sponsor/driver-point-transactions${params ? `?${params}` : ''}`, { method: 'GET' });
           renderTable(filterRowsClientSide(data.transactions || []));
           return;
         }
 
         if (reportType === 'top-drivers') {
           title.textContent = 'Top Drivers';
+          subtitle.textContent = 'Highest current balances and point totals.';
           const data = await Team15.api('/api/sponsor/reports/top-drivers', { method: 'GET' });
           renderTable(filterRowsClientSide(data.rows || []));
           return;
@@ -173,6 +202,7 @@
 
         if (reportType === 'purchases') {
           title.textContent = 'Purchase Summary';
+          subtitle.textContent = 'Purchases placed under this sponsor.';
           const data = await Team15.api('/api/sponsor/reports/purchase-summary', { method: 'GET' });
           renderTable(filterRowsClientSide(data.rows || []));
           return;
@@ -180,7 +210,17 @@
 
         if (reportType === 'invoice') {
           title.textContent = 'Invoice Summary';
+          subtitle.textContent = 'Sponsor-level purchase totals and redeemed points.';
           const data = await Team15.api('/api/sponsor/reports/invoice-summary', { method: 'GET' });
+          renderTable(filterRowsClientSide(data.rows || []));
+          return;
+        }
+
+        if (reportType === 'audit') {
+          title.textContent = 'Sponsor Audit Log';
+          subtitle.textContent = 'Restricted to this sponsor only.';
+          const params = buildParams(reportType).toString();
+          const data = await Team15.api(`/api/sponsor/reports/audit-log${params ? `?${params}` : ''}`, { method: 'GET' });
           renderTable(filterRowsClientSide(data.rows || []));
         }
       } catch (err) {
