@@ -21,6 +21,12 @@
     .search-row { display:grid; grid-template-columns:1fr auto; gap:8px; }
     .point-plus { color:#38ef7d; font-weight:700; }
     .point-minus { color:#ef5350; font-weight:700; }
+    .status-pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+    .status-pending { background:#6b7280; color:#fff; }
+    .status-processing { background:#2563eb; color:#fff; }
+    .status-completed { background:#15803d; color:#fff; }
+    .status-cancelled { background:#b91c1c; color:#fff; }
+    .orders-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     @media (max-width: 768px) { .search-row { grid-template-columns:1fr; } .sponsor-item { flex-direction:column; } }
   </style>
 </head>
@@ -98,6 +104,33 @@
     <div class="card" style="margin-top:18px">
       <div class="row" style="justify-content:space-between; gap:12px; align-items:end; flex-wrap:wrap">
         <div>
+          <h3 style="margin:0 0 6px">My Orders</h3>
+          <div class="small">Track submitted purchase requests and their current status.</div>
+        </div>
+        <div class="orders-actions">
+          <button class="btn ghost" id="refreshOrdersBtn" type="button">Refresh</button>
+        </div>
+      </div>
+      <table class="table" id="ordersTable" style="margin-top:12px">
+        <thead>
+          <tr>
+            <th>Order #</th>
+            <th>Date</th>
+            <th>Sponsor</th>
+            <th>Items</th>
+            <th>Total Points</th>
+            <th>Status</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="msg" id="ordersMsg"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div class="row" style="justify-content:space-between; gap:12px; align-items:end; flex-wrap:wrap">
+        <div>
           <h3 style="margin:0 0 6px">Point History</h3>
           <div class="small">Transaction history for the selected sponsor.</div>
         </div>
@@ -142,12 +175,24 @@
     const sponsorList = Team15.qs('#sponsorList');
     const tbody = Team15.qs('#txTable tbody');
     const historyMsg = Team15.qs('#historyMsg');
+    const ordersTbody = Team15.qs('#ordersTable tbody');
+    const ordersMsg = Team15.qs('#ordersMsg');
     let memberships = [];
 
     function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     function statusBadge(status) {
       const s = String(status || '').toUpperCase();
       return `<span class="${s === 'APPROVED' ? 'pill-ok' : 'pill-muted'}">${esc(s || 'UNKNOWN')}</span>`;
+    }
+    function orderStatusBadge(status) {
+      const s = String(status || 'PENDING').toUpperCase();
+      const cls = {
+        PENDING: 'status-pending',
+        PROCESSING: 'status-processing',
+        COMPLETED: 'status-completed',
+        CANCELLED: 'status-cancelled'
+      }[s] || 'status-pending';
+      return `<span class="status-pill ${cls}">${esc(s)}</span>`;
     }
     function formatDate(v) {
       if (!v) return '-';
@@ -297,10 +342,28 @@
       historyMsg.textContent = filtered ? `Showing ${rows.length} transaction(s).` : '';
     }
 
+    async function loadOrders() {
+      const data = await Team15.api('/api/driver/purchases');
+      const orders = data.purchases || [];
+      ordersTbody.innerHTML = orders.length ? orders.map(order => `
+        <tr>
+          <td>#${Number(order.purchase_id || 0)}</td>
+          <td>${formatDate(order.created_at)}</td>
+          <td>${esc(order.org_name || ('Org ' + (order.org_id ?? '')))}</td>
+          <td>${Number(order.item_count || 0).toLocaleString()}</td>
+          <td>${Number(order.total_points || 0).toLocaleString()}</td>
+          <td>${orderStatusBadge(order.purchase_status)}</td>
+          <td>${formatDate(order.confirmed_at)}</td>
+        </tr>
+      `).join('') : '<tr><td colspan="7" class="small">No orders found yet.</td></tr>';
+      ordersMsg.textContent = orders.length ? `Showing ${orders.length} order(s).` : '';
+    }
+
     async function refreshAll() {
       await loadMemberships();
       await loadTotals();
       await loadApplications();
+      await loadOrders();
       await loadHistory(false);
     }
 
@@ -315,6 +378,7 @@
 
     Team15.qs('#switchSponsorBtn').addEventListener('click', () => switchSponsor().catch(e => sponsorMsg.textContent = e.message));
     Team15.qs('#sponsorSearchBtn').addEventListener('click', () => runSponsorSearch().catch(e => sponsorSearchMsg.textContent = e.message));
+    Team15.qs('#refreshOrdersBtn').addEventListener('click', () => loadOrders().catch(e => ordersMsg.textContent = e.message));
     Team15.qs('#filterBtn').addEventListener('click', () => loadHistory(true).catch(e => historyMsg.textContent = e.message));
     Team15.qs('#clearFilterBtn').addEventListener('click', async () => {
       Team15.qs('#filterStartDate').value = '';

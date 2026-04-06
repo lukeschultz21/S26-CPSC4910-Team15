@@ -3855,16 +3855,213 @@ app.post("/api/admin/bulk-load", requireRole("admin"), upload.single("file"), as
   }
 });
 
-app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
-app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "public", "about.html")));
-app.get("/change-password", (req, res) => res.sendFile(path.join(__dirname, "public", "change-password.html")));
 
-const port = process.env.PORT || 8080;
-app.listen(port, () => console.log(`Listening on ${port}`));
+function validatePasswordForAdminCreate(password) {
+  const PASSWORD_RULES = {
+    minLength: 8,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumbers: true,
+    requireSpecialChar: true,
+    specialChars: '!@#$%^&*()_+-=[]{}|;:",.<>?'
+  };
 
+  const errors = [];
+  if (!password || password.length < PASSWORD_RULES.minLength) errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters long`);
+  if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password || "")) errors.push("Password must contain at least 1 uppercase letter");
+  if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password || "")) errors.push("Password must contain at least 1 lowercase letter");
+  if (PASSWORD_RULES.requireNumbers && !/[0-9]/.test(password || "")) errors.push("Password must contain at least 1 number");
+  if (PASSWORD_RULES.requireSpecialChar) {
+    const hasSpecialChar = PASSWORD_RULES.specialChars.split("").some((char) => String(password || "").includes(char));
+    if (!hasSpecialChar) errors.push("Password must contain at least 1 special character");
+  }
+  return errors;
+}
 
-// ===== ADMIN CREATE USER (PATCH - NON-DESTRUCTIVE) =====
-app.post('/api/admin/create-user', async (req, res) => {
+// ============================================
+// Plain user: browse sponsors and apply
+// ============================================
+app.get("/api/user/sponsors", requireRole("user"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const q = String(req.query.q || "").trim();
+
+    const [rows] = await pool.query(
+      `SELECT org_id, org_name, org_status
+       FROM SPONSORORGANIZATION
+       WHERE org_status = 'active'
+         AND (? = '' OR org_name LIKE CONCAT('%', ?, '%'))
+       ORDER BY org_name ASC
+       LIMIT 100`,
+      [q, q]
+    );
+
+    const [apps] = await pool.query(
+      `SELECT application_id, org_id, application_status, application_date, decision_reason
+       FROM DRIVERAPPLICATIONS
+       WHERE user_id = ?
+       ORDER BY application_date DESC, application_id DESC`,
+      [req.session.user.user_id]
+    );
+
+    const byOrg = new Map();
+    for (const app of apps) {
+      const orgId = Number(app.org_id);
+      if (!byOrg.has(orgId)) byOrg.set(orgId, app);
+    }
+
+    res.json({
+      ok: true,
+      sponsors: rows.map((row) => ({
+        ...row,
+        application: byOrg.get(Number(row.org_id)) || null
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/user/applications", requireRole("user"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [applications] = await pool.query(
+      `SELECT
+         da.application_id,
+         da.org_id,
+         da.application_status,
+         da.application_date,
+         da.decision_reason,
+         so.org_name
+       FROM DRIVERAPPLICATIONS da
+       LEFT JOIN SPONSORORGANIZATION so ON so.org_id = da.org_id
+       WHERE da.user_id = ?
+       ORDER BY FIELD(UPPER(da.application_status), 'PENDING', 'APPROVED', 'REJECTED', 'REVOKED'),
+                da.application_date DESC,
+                da.application_id DESC`,
+      [req.session.user.user_id]
+    );
+    res.json({ ok: true, applications });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/user/applications", requireRole("user"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const orgId = Number(req.body?.org_id);
+    const msg = safeTrim(req.body?.message);
+    if (!orgId) return res.status(400).json({ error: "org_id is required" });
+
+    const [orgRows] = await pool.query(
+      "SELECT org_id, org_name, org_status FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1",
+      [orgId]
+    );
+    if (!orgRows.length) return res.status(404).json({ error: "Sponsor organization not found" });
+    if (String(orgRows[0].org_status || "").toLowerCase() !== "active") {
+      return res.status(400).json({ error: "Sponsor organization is not active" });
+    }
+
+    const [existingRows] = await pool.query(
+      `SELECT application_id, application_status
+       FROM DRIVERAPPLICATIONS
+       WHERE user_id = ? AND org_id = ?
+       ORDER BY application_id DESC
+       LIMIT 1`,
+      [actorUserId, orgId]
+    );
+
+    let applicationId;
+    if (existingRows.length) {
+      const existingStatus = String(existingRows[0].application_status || "").toUpperCase();
+      if (["PENDING", "APPROVED"].includes(existingStatus)) {
+        return res.status(409).json({ error: `Application already ${existingStatus.toLowerCase()} for this sponsor` });
+      }
+      await pool.query(
+        `UPDATE DRIVERAPPLICATIONS
+         SET application_status = 'PENDING', is_active = 1, application_date = NOW(), decision_reason = ?
+         WHERE application_id = ?`,
+        [msg || null, existingRows[0].application_id]
+      );
+      applicationId = existingRows[0].application_id;
+    } else {
+      const [result] = await pool.query(
+        `INSERT INTO DRIVERAPPLICATIONS
+          (user_id, org_id, application_status, is_active, application_date, decision_reason)
+         VALUES
+          (?, ?, 'PENDING', 1, NOW(), ?)`,
+        [actorUserId, orgId, msg || null]
+      );
+      applicationId = result.insertId;
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, org_id, details)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          "SUBMIT_APPLICATION",
+          "DRIVERAPPLICATION",
+          applicationId,
+          actorUserId,
+          orgId,
+          JSON.stringify({ org_id: orgId, source_role: "user", decision_reason: msg || null })
+        ]
+      );
+    } catch (_) {}
+
+    try {
+      const [sponsorUsers] = await pool.query("SELECT user_id FROM SPONSORUSERS WHERE org_id = ?", [orgId]);
+      const noteMsg = `A new user applied to sponsor ${orgRows[0].org_name}. (application_id: ${applicationId})`;
+      for (const su of sponsorUsers) {
+        await pool.query(
+          `INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [su.user_id, "NEW_DRIVER_APPLICATION", noteMsg, "DRIVERAPPLICATION", applicationId]
+        );
+      }
+    } catch (_) {}
+
+    res.json({ ok: true, application_id: applicationId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/user/withdraw-application", requireRole("user"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const applicationId = Number(req.body?.application_id);
+    if (!applicationId) return res.status(400).json({ error: "application_id is required" });
+
+    const [appRows] = await pool.query(
+      "SELECT application_id, user_id, org_id, application_status FROM DRIVERAPPLICATIONS WHERE application_id = ? LIMIT 1",
+      [applicationId]
+    );
+    if (!appRows.length) return res.status(404).json({ error: "Application not found" });
+    const application = appRows[0];
+    if (Number(application.user_id) !== Number(actorUserId)) {
+      return res.status(403).json({ error: "You can only withdraw your own application" });
+    }
+    if (String(application.application_status).toUpperCase() !== "PENDING") {
+      return res.status(400).json({ error: "Only PENDING applications can be withdrawn" });
+    }
+
+    await pool.query("UPDATE DRIVERAPPLICATIONS SET application_status = 'REVOKED' WHERE application_id = ?", [applicationId]);
+    res.json({ ok: true, application_id: applicationId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================
+// Admin: create user from dashboard
+// ============================================
+app.post("/api/admin/create-user", requireRole("admin"), async (req, res) => {
+  const conn = await getPool().getConnection();
   try {
     const {
       email,
@@ -3873,70 +4070,110 @@ app.post('/api/admin/create-user', async (req, res) => {
       last_name,
       title,
       birthday,
+      bio,
       password,
       role,
       org_id
-    } = req.body;
+    } = req.body || {};
 
-    if (!email || !username || !first_name || !last_name || !password || !role) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    const normalizedEmail = safeTrim(email).toLowerCase();
+    const normalizedUsername = safeTrim(username);
+    const normalizedRole = safeTrim(role).toLowerCase();
+
+    if (!normalizedEmail || !normalizedUsername || !safeTrim(first_name) || !safeTrim(last_name) || !password || !normalizedRole) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (!["user", "driver", "sponsor", "admin"].includes(normalizedRole)) {
+      return res.status(400).json({ error: "Invalid role" });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const passwordErrors = validatePasswordForAdminCreate(password);
+    if (passwordErrors.length) return res.status(400).json({ error: passwordErrors[0] });
+
+    const numericOrgId = org_id == null || org_id === "" ? null : Number(org_id);
+    if (["driver", "sponsor"].includes(normalizedRole) && !numericOrgId) {
+      return res.status(400).json({ error: "org_id is required for driver and sponsor users" });
     }
 
-    const bcrypt = require('bcrypt');
-    const hashed = await bcrypt.hash(password, 10);
+    await conn.beginTransaction();
 
-    const [existingEmail] = await db.execute("SELECT * FROM USERS WHERE email = ?", [email]);
-    if (existingEmail.length > 0) {
-      return res.status(400).json({ error: 'Email already exists' });
+    const [emailRows] = await conn.query("SELECT user_id FROM USERS WHERE LOWER(email) = LOWER(?) LIMIT 1", [normalizedEmail]);
+    if (emailRows.length) {
+      await conn.rollback();
+      return res.status(409).json({ error: "Email already exists" });
     }
 
-    const [existingUsername] = await db.execute("SELECT * FROM USERS WHERE username = ?", [username]);
-    if (existingUsername.length > 0) {
-      return res.status(400).json({ error: 'Username already exists' });
+    const [usernameRows] = await conn.query("SELECT user_id FROM USERS WHERE username = ? LIMIT 1", [normalizedUsername]);
+    if (usernameRows.length) {
+      await conn.rollback();
+      return res.status(409).json({ error: "Username already exists" });
     }
 
-    const [userResult] = await db.execute(
-      `INSERT INTO USERS (email, username, first_name, last_name, title, birthday, password_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [email, username, first_name, last_name, title || null, birthday || null, hashed]
+    if (numericOrgId) {
+      const [orgRows] = await conn.query("SELECT org_id FROM SPONSORORGANIZATION WHERE org_id = ? LIMIT 1", [numericOrgId]);
+      if (!orgRows.length) {
+        await conn.rollback();
+        return res.status(400).json({ error: "Organization not found" });
+      }
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    const [result] = await conn.query(
+      `INSERT INTO USERS
+        (email, password_hash, first_name, last_name, username, title, bio, birthday, status, created_at)
+       VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW())`,
+      [
+        normalizedEmail,
+        hash,
+        safeTrim(first_name),
+        safeTrim(last_name),
+        normalizedUsername,
+        safeTrim(title) || null,
+        safeTrim(bio) || null,
+        safeTrim(birthday) || null
+      ]
     );
 
-    const user_id = userResult.insertId;
+    const userId = result.insertId;
+    const actorUserId = req.session.user.user_id;
 
-    if (role === 'admin') {
-      await db.execute("INSERT INTO ADMINUSERS (user_id) VALUES (?)", [user_id]);
+    if (normalizedRole === "admin") {
+      await conn.query("INSERT INTO ADMIN (user_id) VALUES (?)", [userId]);
+    } else if (normalizedRole === "sponsor") {
+      await ensureSponsorMembership(conn, { userId, orgId: numericOrgId });
+    } else if (normalizedRole === "driver") {
+      await ensureDriverMembership(conn, { userId, orgId: numericOrgId, allowMove: false, actorUserId });
     }
 
-    if (role === 'sponsor') {
-      if (!org_id) return res.status(400).json({ error: 'org_id required for sponsor' });
+    try {
+      await conn.query(
+        `INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, org_id, details)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          "ADMIN_CREATE_USER",
+          "USERS",
+          userId,
+          actorUserId,
+          numericOrgId,
+          JSON.stringify({ role: normalizedRole, email: normalizedEmail, username: normalizedUsername })
+        ]
+      );
+    } catch (_) {}
 
-      const [orgCheck] = await db.execute("SELECT * FROM SPONSORORGANIZATION WHERE org_id = ?", [org_id]);
-      if (orgCheck.length === 0) {
-        return res.status(400).json({ error: 'Organization not found' });
-      }
-
-      await db.execute("INSERT INTO SPONSORUSERS (user_id, org_id) VALUES (?, ?)", [user_id, org_id]);
-    }
-
-    if (role === 'driver') {
-      if (!org_id) return res.status(400).json({ error: 'org_id required for driver' });
-
-      const [orgCheck] = await db.execute("SELECT * FROM SPONSORORGANIZATION WHERE org_id = ?", [org_id]);
-      if (orgCheck.length === 0) {
-        return res.status(400).json({ error: 'Organization not found' });
-      }
-
-      await db.execute("INSERT INTO DRIVERS (user_id, org_id, driver_status) VALUES (?, ?, 'active')", [user_id, org_id]);
-    }
-
-    return res.json({ success: true, user_id });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Server error creating user' });
+    await conn.commit();
+    res.json({ ok: true, user_id: userId, role: normalizedRole });
+  } catch (e) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
   }
 });
+
+app.get("/login", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
+app.get("/about", (req, res) => res.sendFile(path.join(__dirname, "public", "about.html")));
+app.get("/change-password", (req, res) => res.sendFile(path.join(__dirname, "public", "change-password.html")));
+
+const port = process.env.PORT || 8080;
+app.listen(port, () => console.log(`Listening on ${port}`));

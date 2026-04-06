@@ -23,14 +23,137 @@
       <h2 style="margin:0 0 6px">Welcome</h2>
       <div class="small" id="welcome"></div>
       <p class="sub" style="margin-top:12px">
-        Your account exists in USERS, but you do not have a role yet.
-        A sponsor/admin can assign you by inserting a row into DRIVERS/SPONSORUSERS/ADMIN.
+        Your account is active and ready. Use the sponsor menu below to browse sponsors and submit applications.
+        Once approved, your account will move into the driver experience automatically.
       </p>
+      <div class="msg" id="pageMsg"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap">
+        <h3 style="margin:0">Apply to Sponsors</h3>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+          <input class="input" id="search" placeholder="Search sponsors by name" style="min-width:260px" />
+          <button class="btn" id="searchBtn">Search</button>
+          <button class="btn ghost" id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px; display:grid; grid-template-columns:2fr 1fr; gap:12px; align-items:end">
+        <div>
+          <label class="small" for="orgSelect">Available sponsors</label>
+          <select class="input" id="orgSelect">
+            <option value="">Select a sponsor…</option>
+          </select>
+        </div>
+        <div>
+          <label class="small" for="selectedStatus">Current status</label>
+          <input class="input" id="selectedStatus" disabled value="No sponsor selected" />
+        </div>
+      </div>
+
+      <div style="margin-top:12px">
+        <label class="small" for="appMsg">Optional application note</label>
+        <textarea class="input" id="appMsg" rows="3" placeholder="Tell the sponsor why you want to join their program"></textarea>
+      </div>
+
+      <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap">
+        <button class="btn" id="applyBtn">Apply</button>
+        <button class="btn ghost" id="withdrawBtn">Withdraw Pending</button>
+        <div class="msg" id="applyMsg"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin:0 0 10px">My Applications</h3>
+      <div style="overflow:auto">
+        <table class="table" id="appsTable">
+          <thead>
+            <tr>
+              <th>Sponsor</th>
+              <th>Status</th>
+              <th>Applied</th>
+              <th>Reason / Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="4" class="small">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 
   <script src="/app.js"></script>
   <script>
+    const welcome = Team15.qs("#welcome");
+    const pageMsg = Team15.qs("#pageMsg");
+    const applyMsg = Team15.qs("#applyMsg");
+    const searchInput = Team15.qs("#search");
+    const orgSelect = Team15.qs("#orgSelect");
+    const selectedStatus = Team15.qs("#selectedStatus");
+    const appsTbody = Team15.qs("#appsTable tbody");
+
+    let sponsors = [];
+    let applications = [];
+
+    function fmtDate(value) {
+      if (!value) return "—";
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
+    }
+
+    function selectedSponsor() {
+      const orgId = Number(orgSelect.value || 0);
+      return sponsors.find((s) => Number(s.org_id) === orgId) || null;
+    }
+
+    function refreshSelectedStatus() {
+      const sponsor = selectedSponsor();
+      if (!sponsor) {
+        selectedStatus.value = "No sponsor selected";
+        return;
+      }
+      const app = sponsor.application;
+      selectedStatus.value = app ? `${app.application_status}${app.decision_reason ? " — " + app.decision_reason : ""}` : "No application yet";
+    }
+
+    async function loadSponsors() {
+      const q = searchInput.value.trim();
+      const data = await Team15.api(`/api/user/sponsors?q=${encodeURIComponent(q)}`, { method: "GET" });
+      sponsors = data.sponsors || [];
+
+      const current = orgSelect.value;
+      orgSelect.innerHTML = `<option value="">Select a sponsor…</option>` + sponsors.map((s) => {
+        const status = s.application ? ` (${s.application.application_status})` : "";
+        return `<option value="${s.org_id}">${s.org_name}${status}</option>`;
+      }).join("");
+
+      if (current && sponsors.some((s) => String(s.org_id) === String(current))) {
+        orgSelect.value = current;
+      }
+      refreshSelectedStatus();
+    }
+
+    async function loadApplications() {
+      const data = await Team15.api("/api/user/applications", { method: "GET" });
+      applications = data.applications || [];
+
+      if (!applications.length) {
+        appsTbody.innerHTML = `<tr><td colspan="4" class="small">No applications yet.</td></tr>`;
+        return;
+      }
+
+      appsTbody.innerHTML = applications.map((app) => `
+        <tr>
+          <td>${app.org_name || ("Org #" + app.org_id)}</td>
+          <td>${app.application_status}</td>
+          <td>${fmtDate(app.application_date)}</td>
+          <td>${app.decision_reason || "—"}</td>
+        </tr>
+      `).join("");
+    }
+
     async function init() {
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
@@ -38,19 +161,83 @@
       if (me.role !== "user") return window.location.href = `/${me.role}/dashboard.html`;
 
       if (Team15.mountImpersonationBanner) await Team15.mountImpersonationBanner();
-
-      // ✅ Avatar/Profile menu (safe call)
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu(".navlinks");
 
-      Team15.qs("#welcome").textContent = `Signed in as ${me.email}`;
+      welcome.textContent = `Signed in as ${me.email}`;
+      await loadSponsors();
+      await loadApplications();
     }
+
+    Team15.qs("#searchBtn").addEventListener("click", async () => {
+      applyMsg.textContent = "";
+      await loadSponsors();
+    });
+
+    Team15.qs("#refreshBtn").addEventListener("click", async () => {
+      searchInput.value = "";
+      applyMsg.textContent = "";
+      await loadSponsors();
+      await loadApplications();
+    });
+
+    orgSelect.addEventListener("change", refreshSelectedStatus);
+
+    Team15.qs("#applyBtn").addEventListener("click", async () => {
+      applyMsg.textContent = "";
+      const sponsor = selectedSponsor();
+      if (!sponsor) {
+        applyMsg.textContent = "Select a sponsor first.";
+        return;
+      }
+      try {
+        await Team15.api("/api/user/applications", {
+          method: "POST",
+          body: JSON.stringify({
+            org_id: Number(sponsor.org_id),
+            message: Team15.qs("#appMsg").value.trim()
+          })
+        });
+        Team15.qs("#appMsg").value = "";
+        applyMsg.textContent = "Application submitted.";
+        await loadSponsors();
+        await loadApplications();
+      } catch (e) {
+        applyMsg.textContent = e.message;
+      }
+    });
+
+    Team15.qs("#withdrawBtn").addEventListener("click", async () => {
+      applyMsg.textContent = "";
+      const sponsor = selectedSponsor();
+      if (!sponsor || !sponsor.application) {
+        applyMsg.textContent = "Select a sponsor with a pending application.";
+        return;
+      }
+      if (String(sponsor.application.application_status).toUpperCase() !== "PENDING") {
+        applyMsg.textContent = "Only pending applications can be withdrawn.";
+        return;
+      }
+      try {
+        await Team15.api("/api/user/withdraw-application", {
+          method: "PUT",
+          body: JSON.stringify({ application_id: sponsor.application.application_id })
+        });
+        applyMsg.textContent = "Application withdrawn.";
+        await loadSponsors();
+        await loadApplications();
+      } catch (e) {
+        applyMsg.textContent = e.message;
+      }
+    });
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
       await Team15.api("/api/logout", { method: "POST" });
       window.location.href = "/";
     });
 
-    init();
+    init().catch((e) => {
+      pageMsg.textContent = e.message || "Failed to load dashboard.";
+    });
   </script>
 </body>
 </html>
