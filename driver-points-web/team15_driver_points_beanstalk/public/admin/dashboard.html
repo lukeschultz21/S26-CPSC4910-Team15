@@ -23,22 +23,33 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2 style="margin:0 0 6px">Admin Dashboard</h2>
-      <div class="small" id="welcome"></div>
+    <div class="card hero-banner">
+      <div class="page-header">
+        <div>
+          <h2 style="margin:0 0 6px">Admin Dashboard</h2>
+          <div class="small" id="welcome"></div>
+        </div>
+        <div class="inline-meta">
+          <span class="chip">Cleaner review mode</span>
+          <span class="chip">Role-safe actions</span>
+        </div>
+      </div>
 
       <div class="kpi" style="margin-top:12px">
         <div class="box">
           <div class="small">Total Users</div>
-          <div style="font-size:30px; font-weight:800" id="users">—</div>
+          <div class="value" id="users">—</div>
         </div>
       </div>
       <div class="msg" id="msg"></div>
     </div>
 
     <div class="card" style="margin-top:18px">
-      <h3 style="margin:0 0 10px">Create User (Admin)</h3>
-      <p class="sub">Admins can add new admins, sponsors, and drivers (users cannot self-promote).</p>
+      <div class="section-header">
+        <h3 style="margin:0">Create User</h3>
+        <span class="chip">Admin only</span>
+      </div>
+      <p class="sub">Keep account creation focused on the fields that matter most for setup. Promote roles only when needed.</p>
 
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px">
         <input class="input" id="c_email" placeholder="Email" />
@@ -63,7 +74,7 @@
     </div>
 
     <div class="card" style="margin-top:18px">
-      <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap">
+      <div class="section-header">
         <h3 style="margin:0">User Management</h3>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
           <input class="input" id="search" placeholder="Search by username, email, or name" style="min-width:260px" />
@@ -74,7 +85,7 @@
 
       <p class="sub" style="margin-top:10px">Admins can promote/remove sponsors and deactivate accounts. Users cannot self-promote.</p>
 
-      <div style="overflow:auto">
+      <div class="table-wrap">
         <table class="table" id="userTable">
           <thead>
             <tr>
@@ -103,6 +114,7 @@
     const userMsg = Team15.qs("#userMsg");
     const userTbody = Team15.qs("#userTable tbody");
     const searchInput = Team15.qs("#search");
+    let currentMe = null;
 
     function rolesLabel(u) {
       const roles = [];
@@ -136,25 +148,25 @@
           const isSponsor = Number(u.is_sponsor) === 1;
           const isAdmin = Number(u.is_admin) === 1;
 
-          const sponsorBtn = isSponsor
-            ? `<button class="btn ghost" data-action="remove-sponsor" data-id="${u.user_id}">Remove Sponsor</button>`
-            : `<button class="btn" data-action="make-sponsor" data-id="${u.user_id}">Make Sponsor</button>`;
+          const isSelf = Number(u.user_id) === Number(currentMe?.user_id || 0);
+          const sponsorBtn = isSelf ? "" : (isSponsor
+            ? `<button class="btn ghost small-btn" data-action="remove-sponsor" data-id="${u.user_id}">Remove Sponsor</button>`
+            : `<button class="btn small-btn" data-action="make-sponsor" data-id="${u.user_id}">Make Sponsor</button>`);
 
-          const statusBtn = status === "active"
-            ? `<button class="btn ghost" data-action="deactivate" data-id="${u.user_id}">Deactivate</button>`
-            : `<button class="btn" data-action="activate" data-id="${u.user_id}">Activate</button>`;
+          const statusBtn = isSelf ? "" : (status === "active"
+            ? `<button class="btn ghost small-btn" data-action="deactivate" data-id="${u.user_id}">Deactivate</button>`
+            : `<button class="btn small-btn" data-action="activate" data-id="${u.user_id}">Activate</button>`);
 
-          const makeAdminBtn = isAdmin
-            ? `<button class="btn ghost" data-action="remove-admin" data-id="${u.user_id}">Remove Admin</button>`
-            : `<button class="btn" data-action="make-admin" data-id="${u.user_id}">Make Admin</button>`;
+          const makeAdminBtn = (!isSelf && !isAdmin)
+            ? `<button class="btn small-btn" data-action="make-admin" data-id="${u.user_id}">Make Admin</button>`
+            : "";
 
-          const editBtn = `<button class="btn ghost" data-action="edit" data-id="${u.user_id}">Edit</button>`;
-          const resetBtn = `<button class="btn ghost" data-action="reset-pw" data-id="${u.user_id}">Reset PW</button>`;
-          const pointsBtn = Number(u.is_driver) === 1 ? `<button class="btn" data-action="adjust-points" data-id="${u.user_id}">Adjust Points</button>` : "";
-          const impDriverBtn = `<button class="btn" data-action="imp-driver" data-id="${u.user_id}">Assume Driver</button>`;
-          const impSponsorBtn = `<button class="btn" data-action="imp-sponsor" data-id="${u.user_id}">Assume Sponsor</button>`;
+          const editBtn = `<button class="btn ghost small-btn" data-action="edit" data-id="${u.user_id}">Edit</button>`;
+          const resetBtn = `<button class="btn ghost small-btn" data-action="reset-pw" data-id="${u.user_id}">Reset PW</button>`;
+          const pointsBtn = Number(u.is_driver) === 1 ? `<button class="btn small-btn" data-action="adjust-points" data-id="${u.user_id}">Adjust Points</button>` : "";
+          const impDriverBtn = Number(u.is_driver) === 1 ? `<button class="btn ghost small-btn" data-action="imp-driver" data-id="${u.user_id}">View as Driver</button>` : "";
+          const impSponsorBtn = Number(u.is_sponsor) === 1 ? `<button class="btn ghost small-btn" data-action="imp-sponsor" data-id="${u.user_id}">View as Sponsor</button>` : "";
 
-          // We don't allow removing admin here (keep it safe for demos)
           const adminTag = isAdmin ? `<span class="pill" style="margin-left:6px">Admin</span>` : "";
 
           return `
@@ -186,6 +198,7 @@
 
     async function init() {
       const me = await Team15.loadMe();
+      currentMe = me;
       if (!me) return window.location.href = "/login.html";
       if (me.role !== "admin") return window.location.href = `/${me.role}/dashboard.html`;
 

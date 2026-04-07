@@ -24,14 +24,14 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2 style="margin:0 0 6px">Sponsor Dashboard</h2>
+    <div class="card hero-banner">
+      <div class="page-header"><h2 style="margin:0 0 6px">Sponsor Dashboard</h2><span class="chip">Cleaner sponsor workspace</span></div>
       <div class="small" id="welcome"></div>
       <p class="sub" style="margin-top:12px">Shows pending driver applications (example endpoint).</p>
     </div>
 
     <!-- Conversion Rate Display -->
-    <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+    <div class="card">
       <h3 style="margin: 0 0 8px 0; font-size: 14px; opacity: 0.9;">Points to Dollar Conversion</h3>
       <div style="font-size: 24px; font-weight: bold; margin: 8px 0;" id="conversionRate">Loading...</div>
 
@@ -58,6 +58,114 @@
         </tbody>
       </table>
       <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <div class="section-header">
+        <div>
+          <h3 style="margin:0 0 6px">Driver Points Manager</h3>
+          <p class="sub">Add or deduct points for approved drivers in your organization without touching point conversion.</p>
+        </div>
+        <span class="chip" id="pointsManagerOrg">Organization drivers</span>
+      </div>
+
+      <div class="stats-grid" style="margin-top:16px">
+        <div class="stat-card">
+          <div class="label">Approved Drivers</div>
+          <div class="value" id="approvedDriverCount">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Total Driver Points</div>
+          <div class="value" id="totalDriverPoints">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Selected Driver</div>
+          <div class="value" id="selectedDriverPoints">—</div>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:16px; align-items:start;">
+        <div>
+          <div class="row">
+            <div>
+              <label for="driverSearch">Find Driver</label>
+              <input id="driverSearch" type="text" placeholder="Search by name or email" />
+            </div>
+          </div>
+
+          <div class="table-wrap" style="margin-top:12px; max-height:420px;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Driver</th>
+                  <th>Balance</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="driverPointsTableBody"></tbody>
+            </table>
+          </div>
+          <div class="msg" id="driverPointsListMsg"></div>
+        </div>
+
+        <div>
+          <div class="card" style="padding:16px; background:rgba(255,255,255,.02); box-shadow:none;">
+            <h3 style="margin:0 0 6px">Adjust Driver Points</h3>
+            <p class="sub" id="selectedDriverLabel">Select a driver from the table to manage their points.</p>
+
+            <div class="row" style="margin-top:12px">
+              <div>
+                <label for="pointAction">Action</label>
+                <select id="pointAction">
+                  <option value="add">Add points</option>
+                  <option value="deduct">Deduct points</option>
+                </select>
+              </div>
+              <div>
+                <label for="pointAmount">Points</label>
+                <input id="pointAmount" type="number" min="1" step="1" placeholder="50" />
+              </div>
+            </div>
+
+            <div style="margin-top:10px">
+              <label for="pointReason">Reason</label>
+              <textarea id="pointReason" placeholder="Explain why the points are changing"></textarea>
+            </div>
+
+            <div class="row" style="margin-top:12px; align-items:flex-end;">
+              <div class="helper" id="selectedDriverMeta">No driver selected.</div>
+              <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button class="btn ghost" id="clearPointFormBtn" type="button">Clear</button>
+                <button class="btn primary" id="savePointChangeBtn" type="button">Save Point Change</button>
+              </div>
+            </div>
+
+            <div class="msg" id="pointAdjustMsg"></div>
+          </div>
+
+          <div class="card" style="padding:16px; margin-top:12px; background:rgba(255,255,255,.02); box-shadow:none;">
+            <div class="section-header">
+              <h3 style="margin:0">Recent Point Activity</h3>
+              <button class="btn ghost small-btn" id="refreshPointActivityBtn" type="button">Refresh</button>
+            </div>
+            <div class="table-wrap" style="margin-top:12px; max-height:260px;">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Driver</th>
+                    <th>Change</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="recentPointActivityBody"></tbody>
+              </table>
+            </div>
+            <div class="msg" id="recentPointActivityMsg"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -125,6 +233,25 @@
     const createDriverPhone = Team15.qs("#driverPhone");
     const createDriverMsg = Team15.qs("#createDriverMsg");
     const msg = Team15.qs("#msg");
+    const approvedDriverCount = Team15.qs("#approvedDriverCount");
+    const totalDriverPoints = Team15.qs("#totalDriverPoints");
+    const selectedDriverPoints = Team15.qs("#selectedDriverPoints");
+    const pointsManagerOrg = Team15.qs("#pointsManagerOrg");
+    const driverPointsTableBody = Team15.qs("#driverPointsTableBody");
+    const driverPointsListMsg = Team15.qs("#driverPointsListMsg");
+    const driverSearch = Team15.qs("#driverSearch");
+    const pointAction = Team15.qs("#pointAction");
+    const pointAmount = Team15.qs("#pointAmount");
+    const pointReason = Team15.qs("#pointReason");
+    const pointAdjustMsg = Team15.qs("#pointAdjustMsg");
+    const selectedDriverLabel = Team15.qs("#selectedDriverLabel");
+    const selectedDriverMeta = Team15.qs("#selectedDriverMeta");
+    const recentPointActivityBody = Team15.qs("#recentPointActivityBody");
+    const recentPointActivityMsg = Team15.qs("#recentPointActivityMsg");
+
+    let sponsorDrivers = [];
+    let pointTransactions = [];
+    let selectedDriver = null;
 
     async function loadPendingApplications() {
       try {
@@ -186,6 +313,125 @@ async function rejectApplication(applicationId) {
     alert("Error: " + e.message);
   }
 }
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderDriverSummary() {
+      approvedDriverCount.textContent = String(sponsorDrivers.length);
+      const totalPoints = sponsorDrivers.reduce((sum, driver) => sum + Number(driver.current_points || 0), 0);
+      totalDriverPoints.textContent = totalPoints.toLocaleString();
+      selectedDriverPoints.textContent = selectedDriver ? Number(selectedDriver.current_points || 0).toLocaleString() : "—";
+    }
+
+    function renderDriverTable() {
+      const term = (driverSearch.value || "").trim().toLowerCase();
+      const filtered = sponsorDrivers.filter((driver) => {
+        const haystack = `${driver.first_name || ""} ${driver.last_name || ""} ${driver.driver_email || ""}`.toLowerCase();
+        return !term || haystack.includes(term);
+      });
+
+      driverPointsTableBody.innerHTML = "";
+      if (!filtered.length) {
+        driverPointsTableBody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No drivers match your search.</div></td></tr>`;
+        return;
+      }
+
+      filtered.forEach((driver) => {
+        const isSelected = selectedDriver && Number(selectedDriver.driver_user_id) === Number(driver.driver_user_id);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>
+            <div style="font-weight:700;">${escapeHtml(`${driver.first_name || ""} ${driver.last_name || ""}`.trim() || driver.driver_email || `Driver ${driver.driver_user_id}`)}</div>
+            <div class="small">${escapeHtml(driver.driver_email || "")}</div>
+          </td>
+          <td style="font-weight:700;">${Number(driver.current_points || 0).toLocaleString()}</td>
+          <td><span class="chip">${escapeHtml(driver.sponsorship_status || driver.driver_status || "ACTIVE")}</span></td>
+          <td><button class="btn ${isSelected ? "primary" : "ghost"} small-btn" type="button">${isSelected ? "Selected" : "Manage"}</button></td>
+        `;
+        tr.querySelector("button").addEventListener("click", () => {
+          selectedDriver = driver;
+          selectedDriverLabel.textContent = `Adjusting points for ${driver.first_name || ""} ${driver.last_name || ""}`.trim();
+          selectedDriverMeta.textContent = `Current balance: ${Number(driver.current_points || 0).toLocaleString()} points`;
+          pointAdjustMsg.textContent = "";
+          renderDriverSummary();
+          renderDriverTable();
+          renderPointActivity();
+        });
+        driverPointsTableBody.appendChild(tr);
+      });
+    }
+
+    function renderPointActivity() {
+      const filtered = selectedDriver
+        ? pointTransactions.filter((tx) => Number(tx.driver_user_id) === Number(selectedDriver.driver_user_id))
+        : pointTransactions;
+
+      recentPointActivityBody.innerHTML = "";
+      if (!filtered.length) {
+        recentPointActivityBody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No recent point changes yet.</div></td></tr>`;
+        return;
+      }
+
+      filtered.slice(0, 12).forEach((tx) => {
+        const tr = document.createElement("tr");
+        const change = Number(tx.point_change || 0);
+        tr.innerHTML = `
+          <td>${new Date(tx.created_at).toLocaleString()}</td>
+          <td>${escapeHtml(`${tx.first_name || ""} ${tx.last_name || ""}`.trim() || tx.driver_email || "Driver")}</td>
+          <td class="${change >= 0 ? "badge-positive" : "badge-negative"}">${change >= 0 ? "+" : ""}${change.toLocaleString()}</td>
+          <td>${escapeHtml(tx.reason || "")}</td>
+        `;
+        recentPointActivityBody.appendChild(tr);
+      });
+    }
+
+    async function loadSponsorDriverBalances() {
+      driverPointsListMsg.textContent = "";
+      try {
+        const data = await Team15.api("/api/sponsor/driver-balances", { method: "GET" });
+        sponsorDrivers = Array.isArray(data.drivers) ? data.drivers : [];
+        pointsManagerOrg.textContent = data.org_id ? `Org #${data.org_id}` : "Organization drivers";
+
+        if (selectedDriver) {
+          selectedDriver = sponsorDrivers.find((driver) => Number(driver.driver_user_id) === Number(selectedDriver.driver_user_id)) || null;
+          if (selectedDriver) {
+            selectedDriverLabel.textContent = `Adjusting points for ${selectedDriver.first_name || ""} ${selectedDriver.last_name || ""}`.trim();
+            selectedDriverMeta.textContent = `Current balance: ${Number(selectedDriver.current_points || 0).toLocaleString()} points`;
+          } else {
+            selectedDriverLabel.textContent = "Select a driver from the table to manage their points.";
+            selectedDriverMeta.textContent = "No driver selected.";
+          }
+        }
+
+        renderDriverSummary();
+        renderDriverTable();
+      } catch (e) {
+        sponsorDrivers = [];
+        renderDriverSummary();
+        renderDriverTable();
+        driverPointsListMsg.textContent = e.message;
+      }
+    }
+
+    async function loadRecentPointActivity() {
+      recentPointActivityMsg.textContent = "";
+      try {
+        const data = await Team15.api("/api/sponsor/driver-point-transactions", { method: "GET" });
+        pointTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+        renderPointActivity();
+      } catch (e) {
+        pointTransactions = [];
+        renderPointActivity();
+        recentPointActivityMsg.textContent = e.message;
+      }
+    }
+
     async function init() {
       const me = await Team15.loadMe();
       if (!me) return window.location.href = "/login.html";
@@ -210,6 +456,8 @@ async function rejectApplication(applicationId) {
       }
 
       loadPendingApplications();
+      loadSponsorDriverBalances();
+      loadRecentPointActivity();
     }
 
     Team15.qs("#logoutBtn").addEventListener("click", async () => {
@@ -329,6 +577,66 @@ Team15.qs("#promoBtn").addEventListener("click", async () => {
   } catch (e) {
     promoMsg.style.color = "var(--danger)";
     promoMsg.textContent = e.message;
+  }
+});
+
+driverSearch.addEventListener("input", renderDriverTable);
+
+Team15.qs("#clearPointFormBtn").addEventListener("click", () => {
+  pointAction.value = "add";
+  pointAmount.value = "";
+  pointReason.value = "";
+  pointAdjustMsg.textContent = "";
+});
+
+Team15.qs("#refreshPointActivityBtn").addEventListener("click", async () => {
+  await loadRecentPointActivity();
+});
+
+Team15.qs("#savePointChangeBtn").addEventListener("click", async () => {
+  pointAdjustMsg.textContent = "";
+
+  if (!selectedDriver) {
+    pointAdjustMsg.style.color = "var(--danger)";
+    pointAdjustMsg.textContent = "Select a driver before saving a point change.";
+    return;
+  }
+
+  const amount = Number(pointAmount.value);
+  const reason = pointReason.value.trim();
+  const signedAmount = pointAction.value === "deduct" ? -Math.abs(amount) : Math.abs(amount);
+
+  if (!Number.isInteger(amount) || amount <= 0) {
+    pointAdjustMsg.style.color = "var(--danger)";
+    pointAdjustMsg.textContent = "Enter a whole number greater than 0 for points.";
+    return;
+  }
+
+  if (!reason) {
+    pointAdjustMsg.style.color = "var(--danger)";
+    pointAdjustMsg.textContent = "A reason is required for every point change.";
+    return;
+  }
+
+  try {
+    const response = await Team15.api("/api/driver/points", {
+      method: "PUT",
+      body: JSON.stringify({
+        user_id: Number(selectedDriver.driver_user_id),
+        point_change: signedAmount,
+        reason
+      })
+    });
+
+    pointAdjustMsg.style.color = "#b8c3e6";
+    pointAdjustMsg.textContent = `Saved. ${selectedDriver.first_name || "Driver"} now has ${Number(response.newPoints || 0).toLocaleString()} points.`;
+    pointAmount.value = "";
+    pointReason.value = "";
+    await loadSponsorDriverBalances();
+    await loadRecentPointActivity();
+  } catch (e) {
+    pointAdjustMsg.style.color = "var(--danger)";
+    pointAdjustMsg.textContent = e.message;
   }
 });
 

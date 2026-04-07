@@ -148,39 +148,48 @@
 
     <div class="card formcard">
       <h2 style="margin:0 0 6px">Create account</h2>
-      <p class="small" style="margin:0 0 14px">Creates a user account with secure password encryption.</p>
+      <p class="small" style="margin:0 0 14px">Keep sign up simple. Start with the essentials and add optional profile details later.</p>
 
       <form id="regForm">
-        <div class="row">
-          <div>
-            <label>Username</label>
-            <input name="username" autocomplete="username" required />
+        <div class="form-section stack">
+          <div class="row">
+            <div>
+              <label>Username *</label>
+              <input name="username" autocomplete="username" required placeholder="Choose a username" />
+            </div>
+            <div>
+              <label>Email *</label>
+              <input name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+            </div>
           </div>
-          <div>
-            <label>Title</label>
-            <input name="title" placeholder="e.g., Driver" />
+
+          <div class="row">
+            <div>
+              <label>First name</label>
+              <input name="first_name" autocomplete="given-name" placeholder="First name" />
+            </div>
+            <div>
+              <label>Last name</label>
+              <input name="last_name" autocomplete="family-name" placeholder="Last name" />
+            </div>
           </div>
+
+          <details>
+            <summary>Optional profile details</summary>
+            <div class="row" style="margin-top:12px">
+              <div>
+                <label>Title</label>
+                <input name="title" placeholder="e.g., Driver" />
+              </div>
+              <div>
+                <label>Birthday</label>
+                <input name="birthday" type="date" autocomplete="bday" />
+              </div>
+            </div>
+            <label>Bio</label>
+            <input name="bio" placeholder="Short bio..." />
+          </details>
         </div>
-
-        <div class="row">
-          <div>
-            <label>First name</label>
-            <input name="first_name" autocomplete="given-name" />
-          </div>
-          <div>
-            <label>Last name</label>
-            <input name="last_name" autocomplete="family-name" />
-          </div>
-        </div>
-
-        <label>Email</label>
-        <input name="email" type="email" autocomplete="email" required />
-
-        <label>Birthday</label>
-        <input name="birthday" type="date" autocomplete="bday" />
-
-        <label>Bio</label>
-        <input name="bio" placeholder="Short bio..." />
 
         <label>Password</label>
         <input name="password" type="password" autocomplete="new-password" required id="passwordInput" />

@@ -20,6 +20,22 @@ async function loadMe() {
 
 function qs(sel) { return document.querySelector(sel); }
 
+function buildAvatarDataUri(label = "U") {
+  const safe = String(label || "U").slice(0, 2).toUpperCase();
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#4f8cff"/>
+          <stop offset="100%" stop-color="#7c5cff"/>
+        </linearGradient>
+      </defs>
+      <rect width="80" height="80" rx="40" fill="url(#g)"/>
+      <text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="white">${safe}</text>
+    </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
 /**
  * Adds avatar button + dropdown into a container element (usually .navlinks)
  * Requires: /api/profile returns { profile: { photo_url, username, ... } }
@@ -36,7 +52,7 @@ async function mountProfileMenu(containerSelector = ".navlinks") {
   wrap.className = "dropdown";
   wrap.innerHTML = `
     <button class="avatarBtn" id="avatarBtn" title="Profile">
-      <img id="avatarImg" alt="Profile" src="/default-avatar.png">
+      <img id="avatarImg" alt="Profile" src="">
     </button>
     <div class="dropdownMenu" id="ddMenu">
       <div class="muted" id="ddWho">Signed in</div>
@@ -46,15 +62,18 @@ async function mountProfileMenu(containerSelector = ".navlinks") {
   `;
   container.appendChild(wrap);
 
-  // Load profile photo (fallback is default-avatar.png)
   try {
     const { profile } = await api("/api/profile", { method: "GET" });
     const img = wrap.querySelector("#avatarImg");
-    if (profile?.photo_url) img.src = profile.photo_url;
+    const label = profile?.username || me.email || "U";
+    img.src = profile?.photo_url || buildAvatarDataUri(label[0]);
+    img.onerror = () => { img.src = buildAvatarDataUri(label[0]); };
     wrap.querySelector("#ddWho").textContent = profile?.username
       ? `@${profile.username}`
       : me.email;
   } catch {
+    const img = wrap.querySelector("#avatarImg");
+    img.src = buildAvatarDataUri((me.email || "U")[0]);
     wrap.querySelector("#ddWho").textContent = me.email;
   }
 
