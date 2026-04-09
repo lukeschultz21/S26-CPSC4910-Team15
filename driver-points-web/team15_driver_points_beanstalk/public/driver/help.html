@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Help & FAQ – Driver Points</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .help-hero {
+      padding: 32px 0 18px;
+    }
+    .help-hero h2 {
+      margin: 0 0 6px;
+      font-size: 28px;
+    }
+    .faq-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .faq-item {
+      background: var(--card);
+      border: 1px solid rgba(38,52,88,.8);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .faq-question {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 600;
+      padding: 16px 18px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .faq-question:hover {
+      background: rgba(59,130,246,.08);
+    }
+    .faq-icon {
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--muted);
+      flex-shrink: 0;
+      transition: transform 0.25s ease;
+    }
+    .faq-item.open .faq-icon {
+      transform: rotate(45deg);
+    }
+    .faq-answer {
+      display: none;
+      padding: 0 18px 16px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+      border-top: 1px solid rgba(38,52,88,.5);
+    }
+    .faq-item.open .faq-answer {
+      display: block;
+    }
+    .points-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    .points-table th, .points-table td {
+      border-bottom: 1px solid rgba(38,52,88,.7);
+      padding: 10px 8px;
+      text-align: left;
+    }
+    .points-table th {
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .badge-earn  { display:inline-block; padding:3px 9px; border-radius:999px; background:#1f7a47; color:#fff; font-size:12px; }
+    .badge-spend { display:inline-block; padding:3px 9px; border-radius:999px; background:#1d3a7a; color:#fff; font-size:12px; }
+    .section-title {
+      margin: 28px 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .tip-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 12px;
+    }
+    .tip-card {
+      background: var(--card);
+      border: 1px solid rgba(38,52,88,.8);
+      border-radius: 14px;
+      padding: 16px 18px;
+    }
+    .tip-card .tip-icon {
+      font-size: 26px;
+      margin-bottom: 8px;
+    }
+    .tip-card h4 {
+      margin: 0 0 4px;
+      font-size: 15px;
+    }
+    .tip-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- NAV -->
+    <div class="nav">
+      <div class="brand">
+        <a href="/dashboard" class="brand-logo"><img src="/images/car-logo.png" alt="Driver Points" /></a>
+        <span class="pill">Driver</span>
+      </div>
+      <div class="navlinks">
+        <a class="btn ghost" href="/driver/dashboard.html">Dashboard</a>
+        <a class="btn ghost" href="/driver/catalog.html">Catalog</a>
+        <a class="btn ghost" href="/driver/notifications.html">Notifications</a>
+        <button class="btn" id="logoutBtn">Logout</button>
+      </div>
+    </div>
+
+    <!-- HERO -->
+    <div class="card help-hero">
+      <div class="page-header">
+        <h2 style="margin:0 0 6px">Help &amp; FAQ</h2>
+        <span class="chip">Driver Resources</span>
+      </div>
+      <div class="small" id="welcome"></div>
+      <p style="margin:10px 0 0; color:var(--muted); font-size:14px; line-height:1.6;">
+        Welcome to the Driver Help Center. Here you'll find answers to common questions
+        about how points are earned, redeemed, and managed in the Driver Points program.
+      </p>
+    </div>
+
+    <!-- HOW POINTS ARE EARNED -->
+    <h3 class="section-title">How Points Are Earned</h3>
+    <div class="tip-grid">
+      <div class="tip-card">
+        <div class="tip-icon">🚚</div>
+        <h4>Completed Deliveries</h4>
+        <p>Points are awarded by your sponsor for each completed delivery or trip based on their point rate.</p>
+      </div>
+      <div class="tip-card">
+        <div class="tip-icon">⭐</div>
+        <h4>Performance Bonuses</h4>
+        <p>Sponsors may award bonus points for exceptional performance, on-time delivery, or high ratings.</p>
+      </div>
+      <div class="tip-card">
+        <div class="tip-icon">📅</div>
+        <h4>Sponsor Adjustments</h4>
+        <p>Your sponsor can manually add or deduct points at their discretion, visible in your Point History.</p>
+      </div>
+      <div class="tip-card">
+        <div class="tip-icon">🏆</div>
+        <h4>Milestones & Promotions</h4>
+        <p>Special milestone events or sponsor promotions may grant extra points during limited periods.</p>
+      </div>
+    </div>
+
+    <!-- POINTS CONVERSION TABLE -->
+    <h3 class="section-title">Points Value Reference</h3>
+    <div class="card">
+      <p style="margin:0 0 10px; font-size:14px; color:var(--muted);">
+        Each sponsor sets their own conversion rate. The table below shows a general example.
+        Check your <a href="/driver/dashboard.html" style="color:var(--brand);">Dashboard</a> for your sponsor's exact rate.
+      </p>
+      <table class="points-table">
+        <thead>
+          <tr>
+            <th>Points</th>
+            <th>Approx. Dollar Value</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>100</td><td>$1.00</td><td><span class="badge-earn">Earn</span></td></tr>
+          <tr><td>500</td><td>$5.00</td><td><span class="badge-earn">Earn</span></td></tr>
+          <tr><td>1,000</td><td>$10.00</td><td><span class="badge-spend">Redeem</span></td></tr>
+          <tr><td>5,000</td><td>$50.00</td><td><span class="badge-spend">Redeem</span></td></tr>
+          <tr><td>10,000</td><td>$100.00</td><td><span class="badge-spend">Redeem</span></td></tr>
+        </tbody>
+      </table>
+      <div class="small" style="margin-top:10px;">* Actual value depends on your sponsor's conversion rate (cents per point).</div>
+    </div>
+
+    <!-- FAQ SECTION -->
+    <h3 class="section-title">Frequently Asked Questions</h3>
+    <div class="faq-list" id="faqList">
+
+      <div class="faq-item">
+        <button class="faq-question">
+          How do I earn points?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Points are awarded by your sponsor organization based on your activity (deliveries, performance, etc.).
+          The exact criteria and rate are set by each sponsor. Visit your Dashboard to see your current balance
+          and Point History for a detailed breakdown.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          Why do I have different point balances for different sponsors?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Each sponsor maintains a separate points account for you. Points earned under one sponsor cannot be
+          combined with or transferred to another sponsor's account. Use the "Active Sponsor" selector on your
+          Dashboard to switch between accounts and view each balance.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          How do I redeem my points for rewards?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Go to the <a href="/driver/catalog.html" style="color:var(--brand);">Catalog</a> page to browse
+          available reward items offered by your active sponsor. Add items to your cart and submit an order.
+          Points will be deducted from your balance once the order is confirmed.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          What is the dollar value of my points?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Each sponsor sets their own points-to-dollar conversion rate (in cents per point).
+          Your current sponsor's conversion rate is displayed on your Dashboard under "Points to Dollar Conversion."
+          For example, if the rate is 1 cent per point, then 100 points = $1.00.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          Why did my points decrease?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Points can decrease if your sponsor manually adjusts your balance (deduction) or if you redeem points
+          for a catalog item. Check your <strong>Point History</strong> on the Dashboard to see each transaction,
+          including the reason and who made the adjustment.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          How do I apply to a new sponsor?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          On your Dashboard, scroll to the "Find a Sponsor" section. Search for a sponsor organization by name
+          and click "Apply." You can submit an optional message with your application. Your application status
+          will appear in "My Sponsor Applications."
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          Can I withdraw a pending application?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Yes. In the "My Sponsor Applications" section of your Dashboard, any application with a
+          <strong>PENDING</strong> status will show a "Withdraw" button. Clicking it will cancel that application.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          What happens to my points if a sponsor removes me?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          If your membership with a sponsor is terminated, you may lose access to that sponsor's catalog and
+          redemption options. Your earned points history is still recorded, but unredeemed points may no longer
+          be usable depending on the sponsor's policy. Contact your sponsor for more information.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          How do I check my order status?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Your submitted orders are listed in the "My Orders" section on your Dashboard. Each order shows
+          its current status: <strong>PENDING</strong>, <strong>PROCESSING</strong>, <strong>COMPLETED</strong>,
+          or <strong>CANCELLED</strong>. Click "Refresh" to get the latest updates.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <button class="faq-question">
+          Who do I contact if I have a dispute about my points?
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-answer">
+          Point adjustments are made directly by your sponsor. If you believe a point adjustment was made in
+          error, please reach out to your sponsor organization's representative. Your Point History on the
+          Dashboard shows who made each manual adjustment under the "Adjusted By" column.
+        </div>
+      </div>
+
+    </div><!-- end faq-list -->
+
+  </div><!-- end container -->
+
+  <script src="/app.js"></script>
+  <script>
+    // Auth guard
+    async function init() {
+      const me = await Team15.loadMe();
+      if (!me) return window.location.href = '/login.html';
+      if (me.role !== 'driver') return window.location.href = `/${me.role}/dashboard.html`;
+      if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
+      Team15.qs('#welcome').textContent = `Signed in as ${me.email}`;
+    }
+
+    // Logout
+    Team15.qs('#logoutBtn').addEventListener('click', async () => {
+      await Team15.api('/api/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    // FAQ accordion toggle
+    document.querySelectorAll('.faq-question').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.faq-item');
+        const isOpen = item.classList.contains('open');
+        // Close all
+        document.querySelectorAll('.faq-item.open').forEach(el => el.classList.remove('open'));
+        // Toggle clicked
+        if (!isOpen) item.classList.add('open');
+      });
+    });
+
+    init().catch(console.error);
+  </script>
+</body>
+</html>
