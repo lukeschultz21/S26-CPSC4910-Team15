@@ -1135,8 +1135,9 @@ app.post("/api/login", async (req, res) => {
     const pool = getPool();
 
     // Login with either email OR username
+    // Sprint 9: Also fetch last_login so we can store it in session
     const [rows] = await pool.query(
-      `SELECT user_id, email, username, password_hash, status, first_name, last_name
+      `SELECT user_id, email, username, password_hash, status, first_name, last_name, last_login
        FROM USERS
        WHERE email = ? OR username = ?
        LIMIT 1`,
@@ -1156,6 +1157,20 @@ app.post("/api/login", async (req, res) => {
 
     const role = await getRole(pool, user.user_id);
 
+    // Sprint 9: Save the PREVIOUS last_login into session before overwriting it,
+    // so the driver can see when they last logged in (security monitoring).
+    req.session.last_login = user.last_login || null;
+
+    // Sprint 9: Update last_login to NOW in the database
+    try {
+      await pool.query(
+        "UPDATE USERS SET last_login = NOW() WHERE user_id = ?",
+        [user.user_id]
+      );
+    } catch (_) {
+      // Graceful fallback: if last_login column doesn't exist yet, skip silently
+    }
+
     req.session.user = {
       user_id: user.user_id,
       email: user.email,
@@ -1171,6 +1186,29 @@ app.post("/api/login", async (req, res) => {
 
 app.post("/api/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
+});
+
+// ─── Sprint 9: GET /api/driver/last-login ────────────────────────────────────
+// Returns the timestamp of the driver's PREVIOUS login session for security monitoring.
+app.get("/api/driver/last-login", requireRole("driver"), async (req, res) => {
+  try {
+    // req.session.last_login was saved during login = the login BEFORE this session
+    const lastLogin = req.session.last_login || null;
+
+    // Fallback: if session value somehow isn't set, read current value from DB
+    if (!lastLogin) {
+      const pool = getPool();
+      const [[row]] = await pool.query(
+        "SELECT last_login FROM USERS WHERE user_id = ? LIMIT 1",
+        [req.session.user.user_id]
+      );
+      return res.json({ ok: true, last_login: row?.last_login || null });
+    }
+
+    return res.json({ ok: true, last_login: lastLogin });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Change Password Route

@@ -14,6 +14,8 @@
     .blue { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); }
     .pink { background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%); }
     .green { background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%); }
+    /* Sprint 9 – Last Login card */
+    .orange { background:linear-gradient(135deg,#f7971e 0%,#ffd200 100%); }
     .sponsor-grid { display:grid; gap:10px; }
     .sponsor-item { display:flex; justify-content:space-between; gap:12px; padding:12px; border:1px solid rgba(255,255,255,.08); border-radius:10px; background:rgba(255,255,255,.03); }
     .pill-ok { display:inline-block; padding:4px 10px; border-radius:999px; background:#1f7a47; color:#fff; font-size:12px; }
@@ -41,6 +43,8 @@
         <a class="btn ghost" href="/change-password.html">Change Password</a>
         <a class="btn ghost" href="/driver/catalog.html">Catalog</a>
         <a class="btn ghost" href="/driver/notifications.html">Notifications</a>
+        <!-- Sprint 9: Help/FAQ link -->
+        <a class="btn ghost" href="/driver/help.html">Help / FAQ</a>
         <button class="btn" id="logoutBtn">Logout</button>
       </div>
     </div>
@@ -48,6 +52,34 @@
     <div class="card hero-banner">
       <div class="page-header"><h2 style="margin:0 0 6px">Driver Dashboard</h2><span class="chip">Sponsor-aware points</span></div>
       <div class="small" id="welcome"></div>
+    </div>
+
+    <!-- Sprint 9: Last Login Security Card -->
+    <div class="card" style="margin-top:18px; border-left: 3px solid #f7971e;">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="font-size:22px;">🔒</span>
+        <div>
+          <h3 style="margin:0 0 2px; font-size:15px;">Last Login Session</h3>
+          <div class="small">Monitor this to detect any suspicious activity on your account.</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:14px;">
+        <div>
+          <div class="small" style="margin-bottom:2px;">Date</div>
+          <div id="lastLoginDate" style="font-size:16px; font-weight:700; color:var(--text);">Loading...</div>
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:2px;">Time</div>
+          <div id="lastLoginTime" style="font-size:16px; font-weight:700; color:var(--text);">Loading...</div>
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:2px;">Status</div>
+          <div id="lastLoginStatus" style="font-size:13px;"></div>
+        </div>
+      </div>
+      <div class="small" style="margin-top:10px; color:#f7971e;">
+        ⚠️ If you do not recognize this login, please <a href="/change-password.html" style="color:#f7971e; text-decoration:underline;">change your password</a> immediately and contact your sponsor.
+      </div>
     </div>
 
     <div class="card" style="margin-top:18px">
@@ -198,6 +230,52 @@
       if (!v) return '-';
       const d = new Date(v);
       return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+    }
+
+    // Sprint 9: Display last login date and time separately
+    function displayLastLogin(lastLoginTimestamp) {
+      const dateEl = Team15.qs('#lastLoginDate');
+      const timeEl = Team15.qs('#lastLoginTime');
+      const statusEl = Team15.qs('#lastLoginStatus');
+
+      if (!lastLoginTimestamp) {
+        dateEl.textContent = 'No previous login on record';
+        timeEl.textContent = '—';
+        statusEl.innerHTML = '<span style="color:var(--muted);">First session</span>';
+        return;
+      }
+
+      const d = new Date(lastLoginTimestamp);
+      if (Number.isNaN(d.getTime())) {
+        dateEl.textContent = 'Unknown';
+        timeEl.textContent = 'Unknown';
+        return;
+      }
+
+      // Date: e.g., "Thursday, April 3, 2026"
+      dateEl.textContent = d.toLocaleDateString(undefined, {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+
+      // Time: e.g., "2:47:05 PM EDT"
+      timeEl.textContent = d.toLocaleTimeString(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short'
+      });
+
+      // How long ago
+      const minutesAgo = Math.floor((Date.now() - d.getTime()) / 60000);
+      let ago = '';
+      if (minutesAgo < 2) ago = 'Just now';
+      else if (minutesAgo < 60) ago = `${minutesAgo} minutes ago`;
+      else if (minutesAgo < 1440) ago = `${Math.floor(minutesAgo / 60)} hour(s) ago`;
+      else ago = `${Math.floor(minutesAgo / 1440)} day(s) ago`;
+      statusEl.innerHTML = `<span style="color:#38ef7d; font-weight:600;">${esc(ago)}</span>`;
     }
 
     async function loadMemberships() {
@@ -373,6 +451,16 @@
       if (me.role !== 'driver') return window.location.href = `/${me.role}/dashboard.html`;
       if (Team15.mountProfileMenu) await Team15.mountProfileMenu('.navlinks');
       welcome.textContent = `Signed in as ${me.email}`;
+
+      // Sprint 9: Load and display last login date & time
+      try {
+        const loginData = await Team15.api('/api/driver/last-login');
+        displayLastLogin(loginData.last_login || null);
+      } catch (e) {
+        // Graceful fallback if endpoint not yet available
+        displayLastLogin(null);
+      }
+
       await refreshAll();
     }
 
