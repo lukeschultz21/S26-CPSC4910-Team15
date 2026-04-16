@@ -329,43 +329,81 @@ async function rejectApplication(applicationId) {
       selectedDriverPoints.textContent = selectedDriver ? Number(selectedDriver.current_points || 0).toLocaleString() : "—";
     }
 
-    function renderDriverTable() {
-      const term = (driverSearch.value || "").trim().toLowerCase();
-      const filtered = sponsorDrivers.filter((driver) => {
-        const haystack = `${driver.first_name || ""} ${driver.last_name || ""} ${driver.driver_email || ""}`.toLowerCase();
-        return !term || haystack.includes(term);
-      });
+function renderDriverTable() {
+  const term = (driverSearch.value || "").trim().toLowerCase();
+  const filtered = sponsorDrivers.filter((driver) => {
+    const haystack = `${driver.first_name || ""} ${driver.last_name || ""} ${driver.driver_email || ""}`.toLowerCase();
+    return !term || haystack.includes(term);
+  });
 
-      driverPointsTableBody.innerHTML = "";
-      if (!filtered.length) {
-        driverPointsTableBody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No drivers match your search.</div></td></tr>`;
-        return;
-      }
+  driverPointsTableBody.innerHTML = "";
+  if (!filtered.length) {
+    driverPointsTableBody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No drivers match your search.</div></td></tr>`;
+    return;
+  }
 
-      filtered.forEach((driver) => {
-        const isSelected = selectedDriver && Number(selectedDriver.driver_user_id) === Number(driver.driver_user_id);
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>
-            <div style="font-weight:700;">${escapeHtml(`${driver.first_name || ""} ${driver.last_name || ""}`.trim() || driver.driver_email || `Driver ${driver.driver_user_id}`)}</div>
-            <div class="small">${escapeHtml(driver.driver_email || "")}</div>
-          </td>
-          <td style="font-weight:700;">${Number(driver.current_points || 0).toLocaleString()}</td>
-          <td><span class="chip">${escapeHtml(driver.sponsorship_status || driver.driver_status || "ACTIVE")}</span></td>
-          <td><button class="btn ${isSelected ? "primary" : "ghost"} small-btn" type="button">${isSelected ? "Selected" : "Manage"}</button></td>
-        `;
-        tr.querySelector("button").addEventListener("click", () => {
-          selectedDriver = driver;
-          selectedDriverLabel.textContent = `Adjusting points for ${driver.first_name || ""} ${driver.last_name || ""}`.trim();
-          selectedDriverMeta.textContent = `Current balance: ${Number(driver.current_points || 0).toLocaleString()} points`;
-          pointAdjustMsg.textContent = "";
-          renderDriverSummary();
-          renderDriverTable();
-          renderPointActivity();
+  filtered.forEach((driver) => {
+    const isSelected = selectedDriver && Number(selectedDriver.driver_user_id) === Number(driver.driver_user_id);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div style="font-weight:700;">${escapeHtml(`${driver.first_name || ""} ${driver.last_name || ""}`.trim() || driver.driver_email || `Driver ${driver.driver_user_id}`)}</div>
+        <div class="small">${escapeHtml(driver.driver_email || "")}</div>
+      </td>
+      <td style="font-weight:700;">${Number(driver.current_points || 0).toLocaleString()}</td>
+      <td><span class="chip">${escapeHtml(driver.sponsorship_status || driver.driver_status || "ACTIVE")}</span></td>
+      <td style="display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="btn ${isSelected ? "primary" : "ghost"} small-btn manage-btn" type="button">${isSelected ? "Selected" : "Manage"}</button>
+        <button class="btn ghost small-btn remove-btn" type="button" style="color:#f87171; border-color:#f87171;">Remove</button>
+        <button class="btn ghost small-btn deactivate-btn" type="button" style="color:#facc15; border-color:#facc15;">Deactivate</button>
+      </td>
+    `;
+
+    tr.querySelector(".manage-btn").addEventListener("click", () => {
+      selectedDriver = driver;
+      selectedDriverLabel.textContent = `Adjusting points for ${driver.first_name || ""} ${driver.last_name || ""}`.trim();
+      selectedDriverMeta.textContent = `Current balance: ${Number(driver.current_points || 0).toLocaleString()} points`;
+      pointAdjustMsg.textContent = "";
+      renderDriverSummary();
+      renderDriverTable();
+      renderPointActivity();
+    });
+
+    tr.querySelector(".remove-btn").addEventListener("click", async () => {
+      if (!confirm(`Remove ${driver.first_name || ""} ${driver.last_name || ""} from your organization?`)) return;
+      try {
+        await Team15.api("/api/sponsor/drop-driver", {
+          method: "PUT",
+          body: JSON.stringify({ driver_user_id: driver.driver_user_id })
         });
-        driverPointsTableBody.appendChild(tr);
-      });
-    }
+        driverPointsListMsg.style.color = "#b8c3e6";
+        driverPointsListMsg.textContent = `${driver.first_name || "Driver"} has been removed from your organization.`;
+        await loadSponsorDriverBalances();
+      } catch (e) {
+        driverPointsListMsg.style.color = "var(--danger)";
+        driverPointsListMsg.textContent = e.message;
+      }
+    });
+
+    tr.querySelector(".deactivate-btn").addEventListener("click", async () => {
+      if (!confirm(`Fully deactivate ${driver.first_name || ""} ${driver.last_name || ""}'s account? They will no longer be able to log in.`)) return;
+      try {
+        await Team15.api("/api/sponsor/deactivate-driver", {
+          method: "PUT",
+          body: JSON.stringify({ driver_user_id: driver.driver_user_id })
+        });
+        driverPointsListMsg.style.color = "#b8c3e6";
+        driverPointsListMsg.textContent = `${driver.first_name || "Driver"}'s account has been deactivated.`;
+        await loadSponsorDriverBalances();
+      } catch (e) {
+        driverPointsListMsg.style.color = "var(--danger)";
+        driverPointsListMsg.textContent = e.message;
+      }
+    });
+
+    driverPointsTableBody.appendChild(tr);
+  });
+}
 
     function renderPointActivity() {
       const filtered = selectedDriver

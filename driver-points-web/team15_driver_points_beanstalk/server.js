@@ -2280,6 +2280,72 @@ app.put("/api/sponsor/drop-driver", requireRole("sponsor"), async (req, res) => 
   }
 });
 
+app.put("/api/sponsor/deactivate-driver", requireRole("sponsor"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const actorUserId = req.session.user.user_id;
+    const { driver_user_id } = req.body;
+
+    if (!driver_user_id) {
+      return res.status(400).json({ error: "driver_user_id is required" });
+    }
+
+    // Get sponsor's org_id
+    const [orgRows] = await pool.query(
+      "SELECT org_id FROM SPONSORUSERS WHERE user_id = ? LIMIT 1",
+      [actorUserId]
+    );
+    if (!orgRows.length) {
+      return res.status(404).json({ error: "Sponsor organization not found" });
+    }
+    const sponsorOrgId = orgRows[0].org_id;
+
+    // Verify driver belongs to this sponsor's org
+    const [driverRows] = await pool.query(
+      "SELECT * FROM DRIVERS WHERE user_id = ? LIMIT 1",
+      [driver_user_id]
+    );
+    if (!driverRows.length) {
+      return res.status(404).json({ error: "Driver not found" });
+    }
+    if (driverRows[0].org_id !== sponsorOrgId) {
+      return res.status(403).json({ error: "You can only deactivate drivers from your own organization" });
+    }
+
+    // 1. Deactivate the USER account (blocks login)
+    await pool.query(
+      "UPDATE USER SET user_status = 'INACTIVE' WHERE user_id = ?",
+      [driver_user_id]
+    );
+
+    // 2. Also drop them from the org (same as drop-driver)
+    await pool.query(
+      "UPDATE DRIVERS SET driver_status = 'dropped' WHERE user_id = ?",
+      [driver_user_id]
+    );
+    await pool.query(
+      `UPDATE DRIVER_SPONSORS SET sponsorship_status = 'DROPPED', decided_at = NOW(), decision_reason = ? WHERE user_id = ? AND org_id = ?`,
+      ["Deactivated by sponsor", driver_user_id, sponsorOrgId]
+    );
+
+    // 3. Audit log
+    await pool.query(
+      "INSERT INTO AUDITLOG (action_type, entity_type, entity_id, actor_user_id, details) VALUES (?, ?, ?, ?, ?)",
+      ["DEACTIVATE_DRIVER", "DRIVER", driver_user_id, actorUserId, JSON.stringify({ org_id: sponsorOrgId })]
+    );
+
+    // 4. Notify driver
+    await pool.query(
+      "INSERT INTO NOTIFICATIONS (user_id, notification_type, message, entity_type, entity_id) VALUES (?, ?, ?, ?, ?)",
+      [driver_user_id, "ACCOUNT_DEACTIVATED", "Your driver account has been deactivated by your sponsor.", "DRIVER", driver_user_id]
+    );
+
+    res.json({ ok: true, message: "Driver account deactivated successfully" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============================================
 // Fix pending applications to scope by org
 // ============================================

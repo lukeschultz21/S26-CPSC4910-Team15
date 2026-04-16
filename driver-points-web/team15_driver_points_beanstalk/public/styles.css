@@ -618,3 +618,93 @@ textarea:focus{
 #impersonationBanner .btn{
   border-color:rgba(255,255,255,.25);
 }
+
+/* ========== STATS GRID (index + dashboards) ========== */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.stat-card {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(38,52,88,.8);
+  background: rgba(17,26,46,.7);
+}
+
+.stat-card .label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.stat-card .small {
+  margin-top: 4px;
+}
+
+/* ========== MISC UTILITY (used in dashboards) ========== */
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(59,130,246,.15);
+  color: var(--muted);
+  font-size: 12px;
+  border: 1px solid rgba(59,130,246,.25);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+.table-wrap { overflow-x: auto; }
+.helper { color: var(--muted); font-size: 13px; }
+.empty-state { padding: 16px 0; color: var(--muted); font-size: 13px; }
+.badge-positive { color: #38ef7d; font-weight: 700; }
+.badge-negative { color: #ef5350; font-weight: 700; }
+.page-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+select {
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(38,52,88,.9);
+  background: #1a2540;
+  color: var(--text);
+  font-size: 14px;
+  min-height: 44px;
+}
+
+textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(38,52,88,.9);
+  background: #ffffff;
+  color: #000000;
+  font-size: 14px;
+  min-height: 80px;
+  resize: vertical;
+}
