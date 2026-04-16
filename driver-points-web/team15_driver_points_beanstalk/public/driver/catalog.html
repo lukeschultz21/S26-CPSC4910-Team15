@@ -48,8 +48,20 @@
 
     <div class="layout" style="margin-top:18px">
       <div class="card">
-        <h3 style="margin-top:0">Catalog Items</h3>
-        <div class="small" id="catalogSubtitle">Loading sponsor catalog...</div>
+        <div class="toolbar">
+          <div>
+            <h3 style="margin-top:0">Catalog Items</h3>
+            <div class="small" id="catalogSubtitle">Loading sponsor catalog...</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <label for="pointSort" class="small" style="margin:0;">Sort by Point Cost</label>
+            <select id="pointSort" style="min-width:200px">
+              <option value="default">Default</option>
+              <option value="high-to-low">High to Low</option>
+              <option value="low-to-high">Low to High</option>
+            </select>
+          </div>
+        </div>
         <div id="catalogMsg" class="msg"></div>
         <div class="grid" id="catalogGrid" style="margin-top:12px"></div>
       </div>
@@ -76,11 +88,13 @@
     const catalogSubtitle = Team15.qs('#catalogSubtitle');
     const catalogMsg = Team15.qs('#catalogMsg');
     const catalogGrid = Team15.qs('#catalogGrid');
+    const pointSort = Team15.qs('#pointSort');
     const cartSponsorLabel = Team15.qs('#cartSponsorLabel');
     const cartList = Team15.qs('#cartList');
     const cartMsg = Team15.qs('#cartMsg');
     const purchaseList = Team15.qs('#purchaseList');
     let memberships = [];
+    let currentCatalogItems = [];
 
     function esc(v) { return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
     function selectedMembership() { return memberships.find(m => String(m.org_id) === String(sponsorSelect.value)) || memberships.find(m => m.is_selected) || memberships[0]; }
@@ -112,6 +126,25 @@
         </div>`;
     }
 
+    function renderCatalog(items) {
+      catalogGrid.innerHTML = items.length
+        ? items.map(productCard).join('')
+        : '<div class="small">This sponsor has not added any products yet.</div>';
+    }
+
+    function getSortedCatalogItems(items) {
+      const sorted = [...items];
+      const sortValue = pointSort.value;
+
+      if (sortValue === 'high-to-low') {
+        sorted.sort((a, b) => Number(b.points_cost || 0) - Number(a.points_cost || 0));
+      } else if (sortValue === 'low-to-high') {
+        sorted.sort((a, b) => Number(a.points_cost || 0) - Number(b.points_cost || 0));
+      }
+
+      return sorted;
+    }
+
     function renderCart(items) {
       if (!items.length) {
         cartList.innerHTML = '<div class="small">Your cart is empty.</div>';
@@ -132,8 +165,8 @@
     async function loadCatalog() {
       catalogMsg.textContent = 'Loading sponsor catalog...';
       const data = await Team15.api('/api/driver/catalog');
-      const items = data.items || [];
-      catalogGrid.innerHTML = items.length ? items.map(productCard).join('') : '<div class="small">This sponsor has not added any products yet.</div>';
+      currentCatalogItems = data.items || [];
+      renderCatalog(getSortedCatalogItems(currentCatalogItems));
       catalogMsg.textContent = '';
     }
 
@@ -209,6 +242,10 @@
       welcome.textContent = `Signed in as ${me.email}`;
       await refreshAll();
     }
+
+    pointSort.addEventListener('change', () => {
+      renderCatalog(getSortedCatalogItems(currentCatalogItems));
+    });
 
     Team15.qs('#switchSponsorBtn').addEventListener('click', () => switchSponsor().catch(e => switchMsg.textContent = e.message));
     Team15.qs('#checkoutBtn').addEventListener('click', () => checkout().catch(e => cartMsg.textContent = e.message));
