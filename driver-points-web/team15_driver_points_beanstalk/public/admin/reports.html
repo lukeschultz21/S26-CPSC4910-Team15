@@ -52,27 +52,6 @@
           <label for="endDate">End Date</label>
           <input id="endDate" type="date" />
         </div>
-        <div>
-          <label for="actionType">Audit Category</label>
-          <select id="actionType">
-            <option value="">All</option>
-            <option value="POINT_CHANGE">POINT_CHANGE</option>
-            <option value="LOGIN_ATTEMPT">LOGIN_ATTEMPT</option>
-            <option value="PASSWORD_CHANGE">PASSWORD_CHANGE</option>
-            <option value="DRIVER_APP_SUBMITTED">DRIVER_APP_SUBMITTED</option>
-            <option value="DRIVER_APP_STATUS_CHANGE">DRIVER_APP_STATUS_CHANGE</option>
-            <option value="BULK_CREATE_DRIVER">BULK_CREATE_DRIVER</option>
-            <option value="BULK_CREATE_SPONSOR">BULK_CREATE_SPONSOR</option>
-            <option value="BULK_CREATE_ORG">BULK_CREATE_ORG</option>
-          </select>
-        </div>
-        <div>
-          <label for="viewMode">View</label>
-          <select id="viewMode">
-            <option value="summary">Summary</option>
-            <option value="detailed">Detailed</option>
-          </select>
-        </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap">
           <button class="btn" id="applyFiltersBtn" type="button">Apply Filters</button>
           <button class="btn ghost" id="downloadCsvBtn" type="button">Download CSV</button>
@@ -105,11 +84,10 @@
     const driverIdFilter = Team15.qs('#driverIdFilter');
     const startDate = Team15.qs('#startDate');
     const endDate = Team15.qs('#endDate');
-    const actionType = Team15.qs('#actionType');
-    const viewMode = Team15.qs('#viewMode');
 
     let currentReport = null;
     let currentRows = [];
+    let rawRows = [];
 
     function esc(s){
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -158,19 +136,76 @@
       if (startDate.value) params.set('startDate', startDate.value);
       if (endDate.value) params.set('endDate', endDate.value);
 
-      if (reportType === 'sales-driver' || reportType === 'invoices') {
-        if (driverId && reportType === 'sales-driver') params.set('driver_user_id', driverId);
-      }
-
-      if (reportType === 'sales-sponsor' || reportType === 'sales-driver' || reportType === 'audit') {
-        params.set('view', viewMode.value);
-      }
-
-      if (reportType === 'audit' && actionType.value) {
-        params.set('actionType', actionType.value);
+      if ((reportType === 'sales-driver' || reportType === 'invoices') && driverId) {
+        params.set('driver_user_id', driverId);
       }
 
       return params;
+    }
+
+    function parseDate(value) {
+      if (!value) return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+
+    function inDateRange(value) {
+      const rowDate = parseDate(value);
+      const start = startDate.value ? new Date(startDate.value + 'T00:00:00') : null;
+      const end = endDate.value ? new Date(endDate.value + 'T23:59:59') : null;
+
+      if (!rowDate) return true;
+      if (start && rowDate < start) return false;
+      if (end && rowDate > end) return false;
+      return true;
+    }
+
+    function applyClientFilters(rows) {
+      const orgId = orgIdFilter.value.trim();
+      const driverId = driverIdFilter.value.trim();
+
+      return (rows || []).filter((row) => {
+        if (orgId) {
+          const rowOrg = String(
+            row.org_id ??
+            row.sponsor_id ??
+            row.orgId ??
+            ''
+          );
+          if (rowOrg !== orgId) return false;
+        }
+
+        if (driverId) {
+          const rowDriver = String(
+            row.driver_user_id ??
+            row.user_id ??
+            row.driver_id ??
+            row.userId ??
+            ''
+          );
+          if (rowDriver !== driverId) return false;
+        }
+
+        const rowDate =
+          row.created_at ??
+          row.updated_at ??
+          row.confirmed_at ??
+          row.time_done ??
+          row.application_date ??
+          row.latest_event ??
+          null;
+
+        if ((startDate.value || endDate.value) && !inDateRange(rowDate)) {
+          return false;
+        }
+
+        return true;
+      });
+    }
+
+    function setRows(rows) {
+      rawRows = Array.isArray(rows) ? rows : [];
+      renderTable(applyClientFilters(rawRows));
     }
 
     async function loadReport(reportType){
@@ -183,53 +218,59 @@
           title.textContent = 'Users by Role';
           subtitle.textContent = 'System-wide user counts by role.';
           const data = await Team15.api('/api/admin/reports/users-by-role', {method:'GET'});
-          renderTable(data.rows || []);
+          setRows(data.rows || []);
           return;
         }
+
         if(reportType==='drivers'){
           title.textContent = 'Drivers';
           subtitle.textContent = 'Driver roster with sponsor and balance information.';
           const data = await Team15.api('/api/admin/reports/drivers', {method:'GET'});
-          renderTable(data.rows || []);
+          setRows(data.rows || []);
           return;
         }
+
         if(reportType==='points'){
           title.textContent = 'Points Summary';
           subtitle.textContent = 'Current balances across drivers and sponsors.';
           const data = await Team15.api('/api/admin/reports/points', {method:'GET'});
-          renderTable((data.balances && data.balances.length) ? data.balances : (data.totals || []));
+          setRows((data.balances && data.balances.length) ? data.balances : (data.totals || []));
           return;
         }
+
         if(reportType==='sales-sponsor'){
           title.textContent = 'Sales by Sponsor';
-          subtitle.textContent = `Filtered ${viewMode.value} report by sponsor and date range.`;
+          subtitle.textContent = 'Filtered report by sponsor and date range.';
           const params = buildParams(reportType).toString();
           const data = await Team15.api(`/api/admin/reports/sales-by-sponsor${params ? `?${params}` : ''}`, {method:'GET'});
-          renderTable(data.rows || []);
+          setRows(data.rows || []);
           return;
         }
+
         if(reportType==='sales-driver'){
           title.textContent = 'Sales by Driver';
-          subtitle.textContent = `Filtered ${viewMode.value} report by sponsor, driver, and date range.`;
+          subtitle.textContent = 'Filtered report by sponsor, driver, and date range.';
           const params = buildParams(reportType).toString();
           const data = await Team15.api(`/api/admin/reports/sales-by-driver${params ? `?${params}` : ''}`, {method:'GET'});
-          renderTable(data.rows || []);
+          setRows(data.rows || []);
           return;
         }
+
         if(reportType==='invoices'){
           title.textContent = 'Sponsor Invoices';
           subtitle.textContent = 'One row per driver within a sponsor invoice. Includes fee by driver and total fee due for sponsor.';
           const params = buildParams(reportType).toString();
           const data = await Team15.api(`/api/admin/reports/invoices${params ? `?${params}` : ''}`, {method:'GET'});
-          renderTable(data.rows || []);
+          setRows(data.rows || []);
           return;
         }
+
         if(reportType==='audit'){
-          title.textContent = viewMode.value === 'detailed' ? 'Audit Log Detail' : 'Audit Log Summary';
-          subtitle.textContent = 'Filtered by sponsor, date range, and audit category.';
+          title.textContent = 'Audit Log';
+          subtitle.textContent = 'Filtered by sponsor and date range.';
           const params = buildParams(reportType).toString();
-          const data = await Team15.api(`/api/admin/reports/audit-log${params ? `?${params}` : ''}`, {method:'GET'});
-          renderTable(data.rows || []);
+          const data = await Team15.api(`/api/admin/audit-log${params ? `?${params}` : ''}`, {method:'GET'});
+          setRows(data.audit_logs || []);
           return;
         }
       }catch(err){
