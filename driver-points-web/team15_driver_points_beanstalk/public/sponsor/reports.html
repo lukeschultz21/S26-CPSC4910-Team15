@@ -48,26 +48,6 @@
           <label for="endDate">End Date</label>
           <input id="endDate" type="date" />
         </div>
-        <div>
-          <label for="actionType">Audit Category</label>
-          <select id="actionType">
-            <option value="">All</option>
-            <option value="POINT_CHANGE">POINT_CHANGE</option>
-            <option value="LOGIN_ATTEMPT">LOGIN_ATTEMPT</option>
-            <option value="PASSWORD_CHANGE">PASSWORD_CHANGE</option>
-            <option value="DRIVER_APP_SUBMITTED">DRIVER_APP_SUBMITTED</option>
-            <option value="DRIVER_APP_STATUS_CHANGE">DRIVER_APP_STATUS_CHANGE</option>
-            <option value="BULK_CREATE_DRIVER">BULK_CREATE_DRIVER</option>
-            <option value="BULK_CREATE_SPONSOR">BULK_CREATE_SPONSOR</option>
-          </select>
-        </div>
-        <div>
-          <label for="viewMode">View</label>
-          <select id="viewMode">
-            <option value="detailed">Detailed</option>
-            <option value="summary">Summary</option>
-          </select>
-        </div>
         <div style="display:flex; gap:10px; flex-wrap:wrap">
           <button class="btn" id="applyFiltersBtn" type="button">Apply Filters</button>
           <button class="btn ghost" id="downloadCsvBtn" type="button">Download CSV</button>
@@ -99,8 +79,6 @@
     const driverFilter = Team15.qs('#driverFilter');
     const startDate = Team15.qs('#startDate');
     const endDate = Team15.qs('#endDate');
-    const actionType = Team15.qs('#actionType');
-    const viewMode = Team15.qs('#viewMode');
 
     let currentReport = null;
     let currentRows = [];
@@ -155,8 +133,6 @@
       if (/^\d+$/.test(q)) params.set('driver_user_id', q);
       if (startDate.value) params.set('startDate', startDate.value);
       if (endDate.value) params.set('endDate', endDate.value);
-      if (reportType === 'point-tracking') params.set('view', viewMode.value);
-      if (reportType === 'audit' && actionType.value) params.set('actionType', actionType.value);
       return params;
     }
 
@@ -167,7 +143,7 @@
 
       try {
         if (reportType === 'point-tracking') {
-          title.textContent = viewMode.value === 'summary' ? 'Driver Point Tracking Summary' : 'Driver Point Tracking Detail';
+          title.textContent = 'Driver Point Tracking';
           subtitle.textContent = 'Shows driver, total points, point changes, change date, sponsor, and reason.';
           const params = buildParams(reportType).toString();
           const data = await Team15.api(`/api/sponsor/reports/driver-point-tracking${params ? `?${params}` : ''}`, { method: 'GET' });
