@@ -1,0 +1,14 @@
+O|Alpha Logistics
+D|Alpha Logistics|John|Doe|john.doe@gmail.com|100|Safe driving bonus
+D|Alpha Logistics|Emily|Clark|emily.clark@gmail.com
+S|Alpha Logistics|Sarah|Smith|sarah.smith@gmail.com
+
+O|Beta Transport
+D|Beta Transport|Mike|Johnson|mike.johnson@gmail.com|50|On-time delivery
+D|Beta Transport|Anna|Taylor|anna.taylor@gmail.com
+S|Beta Transport|Chris|Brown|chris.brown@gmail.com
+
+O|Gamma Freight
+D|Gamma Freight|David|Wilson|david.wilson@gmail.com|75|Fuel efficiency
+D|Gamma Freight|Laura|Anderson|laura.anderson@gmail.com
+S|Gamma Freight|Kevin|White|kevin.white@gmail.com
