@@ -1,5 +1,5 @@
 D||Jake|Miller|jake.miller@gmail.com|100|Weekly performance bonus
-D||Lauren|Anderson|lauren.anderson@gmail.com
+D||Laura|Anderson|laura.anderson@gmail.com
 D||Brian|Moore|brian.moore@gmail.com|25|Safety compliance
 S||Kevin|White|kevin.white@gmail.com
 S||Rachel|Green|rachel.green@gmail.com
